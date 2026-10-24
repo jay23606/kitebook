@@ -96,7 +96,7 @@ export async function syncOnce(x: Ctx): Promise<string[]> {
         else if (m.do === "update_trust") msg = "Install updates without asking me is gone: your apps' updates install the latest by themselves now (Settings -> Updates -> Let apps update Kitebook turns that off)"; // an older Settings page
         else if (m.do === "connect_agent") { const C = await import("./agents-connect.ts"); if (!C.AGENTS[m.agent]) throw new Error(`Kitebook doesn't know how to connect ${m.agent}`);
           const res = await C.connect({ url: c.url, token: c.token, space: c.space }, [m.agent]); if (!res.ok.length) throw new Error(`${C.AGENTS[m.agent].label}: ${res.failed[0]?.why ?? "not connected"}`);
-          msg = `${C.AGENTS[m.agent].label} MCP is configured; reload the agent to connect. It uses only its own folder (kb/${res.ok[0].peer}) and can't send tasks`; }
+          msg = `${C.AGENTS[m.agent].label} MCP is configured; ${C.AGENTS[m.agent].kind === "cli-env" ? "open a new terminal before starting the agent" : "reload the agent"} to connect. It uses only its own folder (kb/${res.ok[0].peer}) and can't send tasks`; }
         else if (m.do === "default_agent") { const names = x.agentNames?.() ?? [], a = String(m.agent ?? "");
           if (a && !names.includes(a)) throw new Error(`${a} isn't an agent on this Mac (agents: ${names.join(", ")})`);
           c.prefs ??= {}; if (m.project == null) { if (a) c.prefs.defaultAgent = a; else delete c.prefs.defaultAgent; msg = a ? `${a} runs tasks on this Mac by default` : "back to this Mac's default agent"; }

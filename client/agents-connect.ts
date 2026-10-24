@@ -149,11 +149,12 @@ export async function connectCli(argv: string[]): Promise<number> {
   if (argv.includes("--installer")) { // install.sh: one summary line
     const bad = r.failed.map(x => `${AGENTS[x.agent]?.label ?? x.agent}: ${x.why}`).join("; ");
     console.log(r.ok.length ? `✓ Configured ${names(r.ok.map(x => x.agent))} for Kitebook: each uses only its own folder and can't send tasks (change it in Settings)${bad ? `. Not connected: ${bad}` : ""}` : `Coding agents not connected: ${bad}. Try again later with: kitebook connect`);
+    if (r.ok.some(x => AGENTS[x.agent]?.kind === "cli-env")) console.log("  Open a new terminal before starting Pi so it loads its Kitebook sign-in.");
     return 0; }
   const settings = `${String(cfg.url).replace(/\/+$/, "")}/settings`;
   if (r.ok.length) console.log(`✓ Configured ${names(r.ok.map(x => x.agent))} for Kitebook: each reads and edits only its own folder (${r.ok.map(x => "kb/" + x.peer).join(", ")}) and can't send tasks. Change that in Settings: ${settings}`);
   for (const x of r.failed) console.log(`  ${AGENTS[x.agent]?.label ?? x.agent} not connected: ${x.why}`);
   if (r.ok.length) console.log("  Restart the agent app or reload its MCP servers to use this connection; registration does not prove a live handshake.");
-  if (r.ok.some(x => AGENTS[x.agent]?.kind === "cli-env")) console.log(`  Open a new terminal (or restart ${names(r.ok.filter(x => AGENTS[x.agent]?.kind === "cli-env").map(x => x.agent))}) so it picks up its Kitebook sign-in.`);
+  if (r.ok.some(x => AGENTS[x.agent]?.kind === "cli-env")) console.log(`  Open a new terminal before starting ${names(r.ok.filter(x => AGENTS[x.agent]?.kind === "cli-env").map(x => x.agent))} so it loads its Kitebook sign-in.`);
   return r.ok.length || !r.failed.length ? 0 : 1;
 }
