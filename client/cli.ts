@@ -261,12 +261,14 @@ if (MAIN) {
       const q = pos.join(" ") || kv.question; if (!q || q === true) { console.error('usage: kitebook ask "question" [--to <runner>] [--project p | --repo url] [--agent pi|claude|codex|gemini|cursor|copilot|opencode|grok] [--json]\n       kitebook ask --task <ask id> [instructions]   run an answered ask as a normal task'); process.exit(2); }
       let r = await call("ask", { question: String(q), ...Object.fromEntries(["to", "project", "repo", "agent", "model", "timeout"].filter(k => kv[k] !== undefined).map(k => [k, kv[k]])), wait: 1 });
       let shown = ""; const say = (x: string) => { if (kv.json) return; if (x.startsWith(shown)) process.stdout.write(x.slice(shown.length)); else process.stdout.write((shown ? "\n" : "") + x); shown = x; };
-      for (let n = 0; !r.done && n < 6000; n++) { if (r.partial) say(r.partial); await Bun.sleep(250); r = await call("ask_get", { id: r.id }); }
+      const deadline = Date.now() + 25 * 60000;
+      while (!r.done && Date.now() < deadline) { if (r.partial) say(r.partial); const at = Date.now(); r = await call("ask_get", { id: r.id, wait: 10 }); if (!r.done) await Bun.sleep(Math.max(0, 1000 - (Date.now() - at))); }
       if (kv.json) { console.log(JSON.stringify(r, null, 1)); process.exit(r.state === "succeeded" ? 0 : 1); }
       if (r.state === "succeeded") { say(r.answer ?? ""); process.stdout.write("\n");
         console.error(`(${r.agent ?? "agent"}${r.answer_s != null ? `, ${r.answer_s} s` : ""}${r.session?.warm ? ", warm session" : ""} · ${r.needs_task ? "needs changes: " : ""}run it as a task: kitebook ask --task ${r.id})`); }
       else { if (shown) process.stdout.write("\n"); console.error(`${r.state}: ${r.error ?? ""}`); process.exit(1); }
     }
+    else if (op === "mcp" && pos[0] === "diagnose") console.log(JSON.stringify(await (await import("./connection-check.ts")).connectionCheck(URL_, TOKEN, SPACE), null, 1));
     else if (op === "mcp" && pos[0] === "check") console.log(JSON.stringify(await call("mcp_status", {
       ...(kv["known-tool-revision"] ? { known_tool_revision: String(kv["known-tool-revision"]) } : {}),
       ...(kv["known-instructions-revision"] ? { known_instructions_revision: String(kv["known-instructions-revision"]) } : {}) }), null, 1));

@@ -59,6 +59,13 @@ def main():
         for k in order:
             if k in cl: print(k + "\t" + ",".join(sorted(cl[k], key=order.index)))
         return
+    if sys.argv[2] == "--select":
+        wanted = sys.argv[3].split(","); chosen = {k for k in cl if any(k == w.lstrip("=") or not w.startswith("=") and w in k for w in wanted)}
+        if any(not any(k == w.lstrip("=") or not w.startswith("=") and w in k for k in cl) for w in wanted):
+            raise SystemExit("unknown smoke section in selection")
+        run = set(chosen)
+        for k in chosen: run |= cl[k]
+        print(",".join("=" + k for k in order if k in run)); return
     jobs = max(1, int(sys.argv[2])); times = {}
     if len(sys.argv) > 3:
         try:

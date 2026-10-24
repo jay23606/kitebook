@@ -28,3 +28,20 @@ test("alarm scheduler ignores invalid deadlines and floors overdue work",async()
   const {sp,alarms,db}=fixture(SpaceCore.prototype);await sp.armAlarm(Infinity);await sp.armAlarm(NaN);expect(alarms).toHaveLength(0);
   const before=Date.now();await sp.armAlarm(0);expect(alarms[0]).toBeGreaterThanOrEqual(before+1000);db.close();
 });
+
+test("storage retry circuit survives object reconstruction and stops after eight failed sweeps until operator resumes",async()=>{
+  const {db,sp}=fixture(SpaceGc.prototype);sp.env.BLOB_GC_GRACE_SEC="0";let calls=0;
+  sp.store={unref:async()=>{},refs:async()=>0,del:async()=>{calls++;throw Error("storage unavailable");}};
+  db.run("insert into blob_put values('orphan',0,42)");
+  for(let i=1;i<=8;i++) {await sp.gc();expect(calls).toBe(i);expect(sp.gcStats().retry_failures).toBe(i);
+    expect(sp.gcDue()).toBeGreaterThan(Date.now());db.run("update meta set v='0' where k='gc_retry_at'");db.run("update blob_put set at=0");}
+  const restarted=Object.assign(Object.create(SpaceGc.prototype),sp);await restarted.gc();expect(calls).toBe(8);expect(restarted.gcDue()).toBe(Infinity);expect(restarted.gcStats().retry_paused).toBe(true);
+  restarted.store.del=async()=>{calls++;};await restarted.gc(0,true);expect(calls).toBe(9);expect(restarted.gcStats().retry_paused).toBe(false);expect((db.query("select count(*) n from blob_put").get() as any).n).toBe(0);db.close();
+});
+
+test("overlapping GC invocations share the sweep and cannot reset each other's durable failure counter",async()=>{
+  const {db,sp}=fixture(SpaceGc.prototype);sp.env.BLOB_GC_GRACE_SEC="0";let calls=0,release!:()=>void;
+  const gate=new Promise<void>(r=>release=r);sp.store={unref:async()=>{},refs:async()=>0,del:async()=>{calls++;await gate;throw Error("storage down");}};
+  db.run("insert into blob_put values('orphan',0,1)");const a=sp.gc(),b=sp.gc();expect(a).toBe(b);release();await a;
+  expect(calls).toBe(1);expect(sp.gcStats().retry_failures).toBe(1);db.close();
+});

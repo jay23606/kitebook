@@ -292,7 +292,7 @@ create table if not exists acct(k text primary key, v text);`);
       }
       case "gc": { // blob GC now: mark unreferenced blobs, sweep the ones past the grace (grace_sec overrides it for this run; 0 = sweep now)
         if (!this.sql.exec("select 1 from spaces where id=?", a.space).toArray().length) throw new Error("no space " + a.space);
-        const sp = this.space(a.space), r = await sp.gc(a.grace_sec == null || a.grace_sec === "" ? undefined : Number(a.grace_sec) * 1000);
+        const sp = this.space(a.space), r = await sp.gc(a.grace_sec == null || a.grace_sec === "" ? undefined : Number(a.grace_sec) * 1000, true);
         return { ...r, usage: (await sp.usage()).gc };
       }
       case "gc_store": { // operator only: audit the shared blob store for objects no space marks (stored before markers existed, or leaked)
