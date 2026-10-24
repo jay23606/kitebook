@@ -74,7 +74,7 @@ test("a lost publication response retries the saved payload; local edits and sym
   try {
     await pull(call, root, "server"); mkdirSync(join(root, "files/shared")); writeFileSync(join(root, "files/shared/a.txt"), "A");
     await expect(publish(call, root, "server")).rejects.toThrow("connection lost"); expect(status(root, "server").state).toBe("pending");
-    writeFileSync(join(root, "files/shared/a.txt"), "B"); await publish(call, root, "server"); expect(s.sp.headSeq()).toBe(1); expect(status(root, "server").state).toBe("local_changes");
+    writeFileSync(join(root, "files/shared/a.txt"), "B"); expect((await publish(call, root, "server")).state).toBe("local_changes"); expect(s.sp.headSeq()).toBe(1); expect(status(root, "server").state).toBe("local_changes");
     s.commit([{ path: "shared/a.txt", content: "C" }]); await expect(pull(call, root, "server")).rejects.toThrow("conflict"); expect(readFileSync(join(root, "files/shared/a.txt"), "utf8")).toBe("B");
     symlinkSync(join(root, "state.json"), join(root, "files/shared/link")); await expect(publish(call, root, "server")).rejects.toThrow("symlink");
   } finally { s.db.close(); rmSync(root, { recursive: true, force: true }); }
@@ -93,3 +93,12 @@ test("reference delegation reads bounded knowledge, inspects code, respects task
   calls.length = 0; await assist(call, { goal: "Continue checking", existingTask: "t_existing" }); expect(calls.map(x => x[0])).toEqual(["kb_search", "task_status"]);
   await expect(assist(call, { goal: "Edit", changesCode: true })).rejects.toThrow("project, target");
 });
+
+ test("a failed first pull can retry and status does not initialize an empty replica", async () => {
+  const s = space(), root = mkdtempSync(join(tmpdir(), "kitebook-first-pull-")), dir = join(root, "fresh");
+  try { expect(status(dir, "server").state).toBe("not_initialized"); s.commit([{ path: "shared/a.txt", content: "recover me" }]);
+    await expect(pull(async () => { throw Error("offline"); }, dir, "server")).rejects.toThrow("offline");
+    expect(status(dir, "server").state).toBe("not_initialized"); await pull(s.call, dir, "server");
+    expect(readFileSync(join(dir, "files/shared/a.txt"), "utf8")).toBe("recover me"); expect(status(dir, "server").state).toBe("published");
+  } finally { s.db.close(); rmSync(root, { recursive: true, force: true }); }
+ });

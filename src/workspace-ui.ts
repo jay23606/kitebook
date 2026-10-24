@@ -9,7 +9,10 @@ export async function ownerWorkspace(sp: Space, a: any) {
   if (op === "knowledge") return sp.impl.kb_list(OWNER, { scope: args.scope || undefined, kinds: args.kind ? [args.kind] : undefined, origin: args.origin || undefined, limit: 200, recent: true });
   if (op === "search") return sp.impl.kb_search(OWNER, { query: String(args.query ?? "").slice(0, 1000), scope: args.scope || undefined, kinds: args.kind ? [args.kind] : undefined, origin: args.origin || undefined, k: 100 });
   if (op === "entry") return sp.impl.kb_get(OWNER, { id: args.id });
-  if (op === "files") return sp.impl.ls(OWNER, { path: normPath(args.path ?? "shared") });
+  if (op === "files") { const path = normPath(args.path ?? "shared");
+    try { return await sp.impl.ls(OWNER, { path }); }
+    catch (e) { if (e instanceof RelayError && e.status === 404) return { path, entries: [] }; throw e; }
+  }
   if (op === "file") { const path = normPath(args.path), stat = await sp.impl.stat(OWNER, { path });
     if (stat.size > 8 * 1024 * 1024) throw new RelayError(413, "file over 8 MB: download it with kitebook cat or workspace pull");
     return { ...await sp.impl.read(OWNER, { path }), ...stat }; }

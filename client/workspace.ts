@@ -13,11 +13,12 @@ function safe(base: string, path: string) {
 function init(dir: string, remote: string, path?: string): { root: string; state: State; save: () => void } {
   if (path !== undefined) path = path.replace(/^\/+|\/+$/g, "");
   const root = resolve(dir); let p = root; while (true) { if (lstatSync(p, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(`refused symlink: ${p}`); const next = dirname(p); if (p === next) break; p = next; }
-  mkdirSync(root, { recursive: true, mode: 0o700 }); const sf = safe(root, "state.json"); let state: State;
+  mkdirSync(root, { recursive: true, mode: 0o700 }); const sf = safe(root, "state.json"); const fresh = !existsSync(sf); let state: State;
   if (existsSync(sf)) { state = JSON.parse(readFileSync(sf, "utf8")); if (state.format !== 1 || state.remote !== remote || path && state.path !== path) throw new Error("replica belongs to another server/workspace/path; use a fresh directory"); }
   else { if (readdirSync(root).length) throw new Error("new replica directory must be empty"); state = { format: 1, replica: randomUUID(), remote, path: path ?? "shared", files: {} }; }
   safe(root, "files"); mkdirSync(join(root, "files"), { recursive: true, mode: 0o700 });
   const save = () => { const tmp = safe(root, "state.tmp"); writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 }); renameSync(tmp, sf); };
+  if (fresh) save(); // a failed first request must remain retryable, not leave a nonempty uninitialized folder
   return { root, state, save };
 }
 function local(root: string, p: string) { return safe(root, "files/" + p); }
@@ -78,12 +79,13 @@ export async function publish(call: Call, dir: string, remote: string, options: 
   }
   const result = await call("sync_publish", state.pending);
   for (const [p, sha] of Object.entries<string | null>(result.shas)) { if (sha === null) delete state.files[p]; else state.files[p] = sha; }
-  delete state.pending; save(); return { state: "published", ...result };
+  delete state.pending; save(); return { state: status(dir, remote).state, ...result };
 }
 
-export function status(dir: string, remote: string) { const { root, state } = init(dir, remote); const files = walk(join(root, "files"), join(root, "files"));
+export function status(dir: string, remote: string) { if (!existsSync(join(resolve(dir), "state.json"))) return { state: "not_initialized", replica: null, changed: [], deleted: [], pending_operation: null };
+  const { root, state } = init(dir, remote); const files = walk(join(root, "files"), join(root, "files"));
   const changed = files.filter(p => localHash(local(root, p)) !== state.files[p]); const deleted = Object.keys(state.files).filter(p => !existsSync(local(root, p)));
-  return { state: state.pending ? "pending" : changed.length || deleted.length ? "local_changes" : "published", replica: state.replica, changed, deleted, pending_operation: state.pending?.operation_id ?? null };
+  return { state: state.pending ? "pending" : !state.cursor ? "not_initialized" : changed.length || deleted.length ? "local_changes" : "published", replica: state.replica, changed, deleted, pending_operation: state.pending?.operation_id ?? null };
 }
 
 // A reference client policy: explicit capability needs choose the operation; retrieved text never grants authority.
