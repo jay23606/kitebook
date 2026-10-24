@@ -30,9 +30,7 @@ aliasEnv();
 
 export const HELP = `${CLI}: Kitebook on this Mac
 
-  ${CLI} workspace pull <dir> [--path shared/project]    recover shared files in a fresh sandbox
-  ${CLI} workspace publish <dir> --goal text --next text    publish changes and a handoff
-  ${CLI} workspace status <dir>    show local changes and pending publication
+  ${CLI} workspace pull|publish|status <dir>    recover shared files, publish a handoff, or check local changes
   ${CLI} status                 is everything up? server, runner, public access, version
   ${CLI} open                   open Kitebook in your browser, signed in   (${CLI} settings: straight to Settings)
   ${CLI} update                 update now (it also updates by itself, and Settings -> Updates has Update now)   (${CLI} pin <version|->: approve one exact version for the next update)
@@ -41,8 +39,7 @@ export const HELP = `${CLI}: Kitebook on this Mac
   ${CLI} approve                tasks waiting for your OK on this Mac
   ${CLI} password               your master password: set | change | link (a one-time link when there's no terminal) | shortcut on|off (Touch ID)
   ${CLI} join <url>             add this computer (laptop, cloud VM) by code; approve with ${CLI} approve <code> on one of your devices   (${CLI} login <url>: claim a server you host)
-  ${CLI} logs [server|runner|tunnel] [-f]      ${CLI} restart | stop | start [server|runner|tunnel|all]
-  ${CLI} logs --errors          recent errors from the server and this Mac, secrets hidden (with Experimental on, your apps can read them too)
+  ${CLI} logs [server|runner|tunnel] [-f] [--errors]      ${CLI} restart | stop | start [server|runner|tunnel|all]
   ${CLI} doctor                 check everything; one fix per problem
   ${CLI} uninstall              remove Kitebook from this Mac (your data stays; --all removes it too)
 
