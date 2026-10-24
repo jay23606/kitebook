@@ -4,6 +4,7 @@
 // fileOps/peerOps/taskOps/kbOps; this file keeps what the Worker and the Dir object call: setup, admin RPC, the alarm, run, sockets.
 import { normAcct, dirName } from "../client/account.ts";
 import { missing, RelayError, type Peer, type Res } from "./ops.ts";
+import { mergeCiRuns } from "./ci-runs.ts";
 import { EventsError, CODES } from "./events.ts";
 import { blobStore, b64encode, b64decode, INLINE_MAX, EXTERNAL_AT } from "./blobs.ts";
 import * as KB from "./kb.ts";
@@ -217,8 +218,7 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
     list.push({ id, ...a, at: Date.now() }); this.metaSet("ci_asks", list.slice(-20)); this.emit("ci.asked", OWNER, { data: { id, project: a.project, branch: a.branch } }); return id; }
   // the runner's report: its runs (merged by id, newest first) and the asks it took; answers what is still waiting for it
   ciReport(runner: string, runs: any[], took: string[]) {
-    const keep = new Map<string, any>(); for (const r of [...runs.map(r => ({ ...r, runner })), ...this.ciRuns()]) if (r?.id && !keep.has(r.id)) keep.set(String(r.id), r);
-    this.metaSet("ci_runs", [...keep.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, 40));
+    this.metaSet("ci_runs", mergeCiRuns(this.ciRuns(), runner, runs));
     const asks = (this.metaJ("ci_asks", []) as any[]).filter(x => !took.includes(x.id) && Date.now() - x.at < 86400_000); this.metaSet("ci_asks", asks); return asks; }
   // Run tasks without asking is on (kitebook's view; the runner re-checks the owner's signature): {until} or null
   autorunState(): { on: true; until: number | null } | null { const d = migratePolicy(this.metaJ("policy")?.policy ?? {}).autorun;

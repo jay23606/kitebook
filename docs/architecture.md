@@ -59,7 +59,7 @@ Assistants and agents write notes with `kb_add` and files with `put`, and search
 
 ## Trust boundaries
 - **Cloud → server:** assistants are untrusted callers. Each app has a scope (folders, read or write, may it send tasks). Issued OAuth credentials stay bound to one immutable grant; a display name or a later reconnect cannot change that identity. OAuth with dynamic client registration needs your one-time consent.
-- **Server → runner:** the runner doesn't trust the server to say a task was approved. You approve on your device, or the task carries a signature from an app you pre-approved.
+- **Server → runner:** the runner doesn't trust the server to say a task was approved. You approve on your device, or the task carries a signature from an app you pre-approved. CI reports can arrive out of order: `src/ci-runs.ts` keeps completed results immutable and binds each run id to its reporting runner.
 - **Runner → agent:** the agent runs as you, in a worktree, with a guard that blocks common mistakes. **The guard is not a sandbox**; an agent can get past it on purpose. A real OS sandbox for normal tasks is on the roadmap. Read-only quick asks have a separate boundary: `client/execution-policy.ts` defines protected agent configuration and external-tool restrictions, shared by the CLI and live drivers. Task agents, quick asks and local CI use `client/execution-process.ts` to cancel their whole process tree. `src/auth-grants.ts` owns credential-to-grant binding; protocol handling stays in `src/auth.ts`.
 
 ## What never leaves your Mac
