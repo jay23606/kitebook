@@ -4202,12 +4202,12 @@ env -u XDG_CONFIG_HOME HOME=$XH XLOG=$XLOG KITEBOOK_TEST=1 bun client/runner.ts 
 printf '{"url":"%s","token":"%s","space":"main","approve":"browser","roots":[],"supervise":true}\n' "$KITEBOOK_URL" "$BOX" > $XH/sv.json
 XE="env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME=$XH KITEBOOK_TEST=1 KITEBOOK_SUP_PAUSE_MS=500 KITEBOOK_RUNNER_CONFIG=$XH/sv.json"
 $XE bun client/runner.ts install $XH/sv.json > $XH/sv-install.out 2>&1
-for i in $(seq 1 40); do $XE bun client/cli.ts status > $XH/sv-status.out 2>&1; grep -q "^runner   up" $XH/sv-status.out && break; sleep 0.5; done
-C1=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null); for i in $(seq 1 40); do h describe | jq -e '.runners[]|select(.name=="xbox")|.online' >/dev/null && break; sleep 0.5; done
+for i in $(seq 1 40); do $XE bun client/cli.ts status > $XH/sv-status.out 2>&1; C1=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null || true); [ -n "$C1" ] && kill -0 "$C1" 2>/dev/null && grep -q "^runner   up" $XH/sv-status.out && break; sleep 0.5; done
+[ -n "$C1" ] || die "supervisor child did not start"; for i in $(seq 1 40); do h describe | jq -e '.runners[]|select(.name=="xbox")|.online' >/dev/null && break; sleep 0.5; done
 grep -q "Kitebook's supervisor" $XH/sv-status.out && grep -q "^runner   up" $XH/sv-status.out && [ -f $XH/.config/autostart/kitebook-kitebook-runner.desktop ] && grep -q "supervise.ts run kitebook-runner" $XH/.config/autostart/kitebook-kitebook-runner.desktop \
   && h describe | jq -e '.runners[]|select(.name=="xbox")|.online' >/dev/null \
  || { cat $XH/sv-install.out $XH/sv-status.out; tail -20 $XH/.local/state/kitebook/kitebook-runner.log; die "supervisor install"; }
-$XE bun client/cli.ts restart runner > $XH/sv-r.out 2>&1; for i in $(seq 1 40); do C2=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null); [ -n "$C2" ] && [ "$C2" != "$C1" ] && break; sleep 0.25; done
+$XE bun client/cli.ts restart runner > $XH/sv-r.out 2>&1; for i in $(seq 1 40); do C2=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null || true); [ -n "$C2" ] && [ "$C2" != "$C1" ] && break; sleep 0.25; done
 $XE bun client/cli.ts stop runner > $XH/sv-s.out 2>&1; sleep 1.5; $XE bun client/cli.ts status > $XH/sv-st2.out 2>&1
 $XE bun client/cli.ts logs runner -n 50 > $XH/sv-l.out 2>&1
 [ -n "$C2" ] && [ "$C2" != "$C1" ] && ! kill -0 $C2 2>/dev/null && grep -q "stopped (stays stopped until kitebook start)" $XH/sv-s.out && grep -q "^runner   not running: stopped with kitebook stop. Start it: kitebook start runner" $XH/sv-st2.out && grep -q "connected as xbox" $XH/sv-l.out \
