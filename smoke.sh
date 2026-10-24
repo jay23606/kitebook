@@ -2940,10 +2940,11 @@ sed 's#from *"cloudflare:workers"#from "data:text/javascript,export class Durabl
 # additions, ~8 KB gzip of runner text) put dev + phone-approve at 933.2 gzip, 3236 raw
 # 938 since hosted-prep (2026-10-23): the account model groundwork (src/account-store.ts users + audit + usage counters, src/identity.ts,
 # client/account.ts) puts dev + it at 935.5 gzip, 3243 raw (raw budget unchanged)
-BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 938) && echo "$BS" | jq -e '.raw_kb < 3260' >/dev/null \
+# Workspace UI: shared full-window navigation and responsive home/settings (3261.5 KB raw / 941.1 KB gzip).
+BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 945) && echo "$BS" | jq -e '.raw_kb < 3270' >/dev/null \
   && [ "$(bun -e "await import('$T/bundle-eval.mjs'); console.log(typeof Reflect.getMetadata)")" = undefined ] \
   && grep -q 'from *"cloudflare:workers"' $BJ && [ -z "$(ls .cloudflare/output/v0/workers/default/bundle/*.js | grep -v '/index.js$')" ] \
-  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 938; was 911 before the trim), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
+  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 945; was 911 before the trim), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
 # fix-security P0: the Mac's production server (scripts/serve.sh, what mac-host.sh runs at login) is the built bundle on workerd, data outside the
 # project folder; it carries a cf dev Kitebook over (scripts/migrate-cfdev.ts: DO SQLite as is, simulated R2 -> blobs/<sha256> + refs, hashes checked)
 SVP=$((PORT + 65)); SURL=http://127.0.0.1:$SVP; PORT=$SVP KITEBOOK_DATA=$T/srv bash scripts/serve.sh > $T/serve.log 2>&1 & SVPID=$!

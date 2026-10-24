@@ -24,7 +24,7 @@ import { RELEASE_KEY } from "../client/release-key.ts";
 import { OWNER_JS } from "./policy-ui.ts";
 import { LINK_RE } from "./login.ts";
 import { settingsPage } from "./settings.ts";
-import { THEME_CSS, BASE_CSS, FOLD_CSS, FOLD_JS } from "./ui.ts";
+import { THEME_CSS, BASE_CSS, FOLD_CSS, FOLD_JS, WORKSPACE_CSS, WORKSPACE_JS, workspaceNav } from "./ui.ts";
 import { ingressOf, lockdownFor, hasLocalListener, edgeRoutes } from "./ingress.ts";
 
 // Every client file (minus tests), as text, picked up by Vite at build time: a new client module (e.g. setup.ts) ships with no edit here.
@@ -369,11 +369,11 @@ const SAMPLE = 'Use Kitebook to send my Mac a small coding task: in one of my pr
 // first sign-in in plain words: the one-step install (scripts/get.sh) already opened the browser signed in, and puts `kitebook open` on the Mac;
 // a Kitebook server deployed by hand (Advanced) signs in with its ADMIN_TOKEN as the recovery code
 const FIRST = (_o: string) => `On the Mac running Kitebook, open Terminal and type <code>${CLI} open</code>: it opens this page signed in. Set it up some other way (Cloudflare, by hand)? Paste the server's <code>ADMIN_TOKEN</code> (its recovery code) under <b>Use a recovery code</b>.`;
-// Home, stripped to what can be acted on now (owner, 2026-10-22: "make it absolutely short"): one status sentence (#nowline), then one line per
+// Home: a full-window workspace with persistent navigation, grouped tasks and connected apps alongside them. One status sentence (#nowline), then one line per
 // task that needs you (title + Approve), per running task (title + Cancel) and at most 3 recent ones (title · Done/Failed). Everything else
 // about a task (review, reject, answer, steer, retry, hand-off, the next command, diff, test log, timeline, who's working on it) is on its own
 // page, /start#task-<id> (#taskview, same document). Get started shows only the current step and goes away once done; the apps, the ways to
-// connect and the agent links sit under one More. Tokens and base: src/ui.ts.
+// connect and the agent links sit under Connection options. Tokens and layout: src/ui.ts.
 const START_CSS = `.page{max-width:640px;margin:0 auto;padding:0 20px 64px}
 header.top{display:flex;align-items:center;gap:20px;padding:16px 0 4px}header.top h1{font-size:20px;margin:0;flex:1}
 header.top a,header.top button.link{color:var(--mut);text-decoration:none;font-size:16px}header.top a:hover,header.top button.link:hover{color:var(--fg)}
@@ -430,30 +430,31 @@ ${card(s.open ? "Already have an account?" : s.fresh ? "Signed in before?" : "Si
 <li class="step" id="step-agent"><p>Step 2 of 3 · Connect an assistant, like Claude.ai, ChatGPT, Hark or Claude Code. <span class="tag state">Next</span></p>${localOnly}<div class="act"><button id="pick" class="main">Choose an app</button></div></li>
 <li class="step" id="step-task"><p>Step 3 of 3 · Paste a first task into your assistant, then approve it here. <span class="tag state">Next</span></p><pre id="sample" hidden>${esc(SAMPLE)}</pre><div class="act"><button class="cp main" id="cp-sample" data-for="sample">Copy the request</button></div></li>
 </ol></div></section>
-<div id="stat" class="live"><p class="note">Loading…</p></div>
-<details id="more" class="fold"><summary><span>More</span><span class="v" id="more-n"></span></summary>
+<div class="workspace-grid"><div class="activity-column"><div id="stat" class="live"><p class="note">Loading…</p></div></div>
+<aside class="workspace-context" aria-label="Connected apps and computers"><div class="context-heading"><h2>Connected</h2><a href="/settings#apps">Manage</a></div><div id="peers"><p class="note">Loading…</p></div><div><p class="note">Your assistants send tasks. Your coding agents work on your computer.</p><a class="context-link" href="#more">Connect another app</a></div></aside></div>
+<details id="more" class="fold"><summary><span>Connection options</span><span class="v" id="more-n"></span></summary>
 <p class="note">${isRoot(s.acct) ? "Signed in as the owner" : `Signed in to <b>${esc(s.acct)}</b>`} · <button class="link" id="showsteps">Show the setup steps</button></p>
-<h3>Your Mac and apps</h3><div id="peers"><p class="note">Loading…</p></div>
-<h3>Connect another app</h3>${localOnly}
+<h3>Connect another app</h3>${localOnly}<div class="connect-grid">
 ${app("Claude.ai and ChatGPT", "Add a custom connector with this address, then approve it here once.", `${code("mcpurl", web + "/mcp")}${s.dcrMode === "off" ? `<p class="warn">Claude.ai and ChatGPT can't connect yet: this server doesn't let apps sign themselves up. Whoever runs it turns that on by removing <code>OAUTH_DCR=0</code>.</p>` : ""}`)}
 ${app("Hark", "Give Hark a one-time invite link.", mintBtn("hark", "Create Hark invite link"))}
 ${app("Claude Code", "Run this, then <code>/mcp</code> → Authenticate. No browser there? Create a key command.", `${code("cc-oauth", `claude mcp add --transport http kitebook ${s.origin}/mcp -s user`)}${mintBtn("claude-code", "Create Claude Code command")}`)}
 ${app("Codex", "Run this and approve in the browser it opens.", `${code("cx-oauth", `codex mcp add kitebook --url ${s.origin}/mcp && codex mcp login kitebook`)}${mintBtn("codex", "Create Codex command")}`)}
 ${app("Pi", "Run this, approve in the browser, then type <code>/reload</code> in Pi.", `${code("pi-oauth", `pi mcp add kitebook --url ${s.origin}/mcp && pi mcp login kitebook`)}${mintBtn("pi", "Create Pi command")}`)}
 ${app("Any other agent", `Point it at the setup guide (OpenAPI 3.1: <code>${o}/openapi.json</code>).`, code("guide", web + "/llms.txt"))}
-<p class="note">For agents: <a href="/llms.txt">setup guide</a> · <a href="/openapi.json">OpenAPI</a> · connector address <code>${o}/mcp</code></p></details></main>
+</div><p class="note">For agents: <a href="/llms.txt">setup guide</a> · <a href="/openapi.json">OpenAPI</a> · connector address <code>${o}/mcp</code></p></details></main>
 <main id="taskview" hidden></main>`;
   const data = JSON.stringify(s).replace(/</g, "\\u003c");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Kitebook: get started</title>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>${s.acct === null ? "Sign in" : "Workspace"} · Kitebook</title>
 <link rel="alternate" type="text/markdown" href="/llms.txt">
-<style>${THEME_CSS}${BASE_CSS}${FOLD_CSS}${START_CSS}</style></head><body><div class="page">
-<header class="top"><h1>Kitebook</h1>${s.acct === null ? "" : `<a id="settings" href="/settings">Settings</a><button id="signout" class="link">Sign out</button>`}</header>
+<style>${THEME_CSS}${BASE_CSS}${FOLD_CSS}${START_CSS}${s.acct === null ? "" : WORKSPACE_CSS}</style></head><body${s.acct === null ? "" : ' class="workspace"'}>${s.acct === null ? "" : `<div class="workspace-shell">${workspaceNav("home")}<div class="workspace-main" id="workspace-content" tabindex="-1">`}<div class="page">
+<header class="top">${s.acct === null ? "<h1>Kitebook</h1>" : `<div class="heading"><h1>Workspace</h1><p>Keep your agents and their work in view.</p></div><a id="settings" class="btn" href="/settings#apps">Manage apps</a><button id="signout" class="link">Sign out</button>`}</header>
 ${s.acct === null ? "" : `<div id="autorunbanner" class="warn devbar" role="status" hidden></div><div id="pwbanner" class="warn" role="status" hidden></div><div id="downbanner" class="warn" role="alert" hidden></div>`}${out}
 ${s.acct === null ? `<p class="note">For agents: <a href="/llms.txt">setup guide</a> · <a href="/openapi.json">OpenAPI</a> · connector address <code>${o}/mcp</code></p>` : ""}</div>
-<p id="msg" class="toast" role="status" aria-live="polite"></p>
+${s.acct === null ? "" : "</div></div>"}<p id="msg" class="toast" role="status" aria-live="polite"></p>
 <script id="st" type="application/json">${data}</script>
 <script nonce="${nonce}">
 ${FOLD_JS}
+${s.acct === null ? "" : WORKSPACE_JS}
 ${OWNER_JS}
 const S=JSON.parse(document.getElementById("st").textContent),$=id=>document.getElementById(id);
 let mt=0;const msg=t=>{$("msg").textContent=t;clearTimeout(mt);if(t)mt=setTimeout(()=>{$("msg").textContent=""},15000)}; /* a toast: it never pushes the page around */
@@ -528,19 +529,22 @@ async function stat(force){pwBanner().catch(()=>{});const box=$("stat");if(!box)
 const r=await post({op:"status"}).catch(()=>null);if(!r||!r.ok){box.replaceChildren(el("p","note",r?r.error:"can't reach the server"));return}
 LAST=r.result;autorunBanner(LAST.spaces);downBanner(LAST.spaces);nowLine(LAST.spaces);home(LAST.spaces);peers(LAST.spaces);setup(LAST.setup);if(TV)taskView()}
 // Home: only what can be acted on now. A task that needs you: title + Approve; running: title + Cancel; then at most 3 recent ones.
-function home(spaces){const out=[],many=spaces.length>1,ws=sp=>many?" · "+sp.space:"";let rec=[];
+function home(spaces){const out=[],attention=[],running=[],recent=[],many=spaces.length>1,ws=sp=>many?" · "+sp.space:"";let rec=[];
 for(const sp of spaces){if(sp.paused)out.push(el("p","warn","Paused: no new tasks are accepted until you resume "+(many?"workspace "+sp.space:"this workspace")+"."));
 for(const p of sp.peers)if(p.phone_on){const w=el("p","warn",p.name+" asks only in its Mac dialog, so approvals can wait unseen. "),a=el("a","","Turn on phone approvals");a.href="/settings#approvals";w.append(a);out.push(w)}
-for(const t of sp.needs_you){const x=row(t.id,t.title,t.approved?"starting…":t.state==="needs_input"?"question":null,t.approved?"":"need");x.classList.add("need");
+for(const t of sp.needs_you){const x=row(t.id,t.title,t.approved?"starting…":t.state==="needs_input"?"question":null,t.approved?"":"need");if(!t.approved||t.state==="needs_input")x.classList.add("need");
 if(!t.approved&&t.state!=="needs_input"){if(t.review&&!t.passkey)x.append(btn("Approve","pri",()=>act(sp.space,t.id,"approve")));else if(t.review){const a=el("a","btn pri","Approve");a.href=t.review;x.append(a)}}
-else if(t.state==="needs_input"){const a=el("a","btn pri","Answer");a.href="#task-"+encodeURIComponent(t.id);x.append(a)}out.push(x)}
+else if(t.state==="needs_input"){const a=el("a","btn pri","Answer");a.href="#task-"+encodeURIComponent(t.id);x.append(a)}(t.approved&&t.state!=="needs_input"?running:attention).push(x)}
 for(const t of sp.open){if(sp.needs_you.some(n=>n.id===t.id))continue;const x=row(t.id,t.title,t.stuck?"stuck?":t.state==="running"?(t.elapsed_s!=null?dur(t.elapsed_s):"running")+ws(sp):t.state==="queued"?"queued"+ws(sp):String(t.state).replace(/_/g," "),t.stuck?"need":"");
-x.append(btn("Cancel","rv",async()=>{if(confirm("Cancel "+t.title+"? A running agent is stopped; its partial work stays on its branch."))await act(sp.space,t.id,"cancel")}));out.push(x)}
-for(const q of sp.quick||[])if(!q.done)out.push(row(q.id,q.question,"answering…"));
+x.append(btn("Cancel","rv",async()=>{if(confirm("Cancel "+t.title+"? A running agent is stopped; its partial work stays on its branch."))await act(sp.space,t.id,"cancel")}));running.push(x)}
+for(const q of sp.quick||[])if(!q.done)running.push(row(q.id,q.question,"answering…"));
 rec=rec.concat(sp.recent.map(t=>({sp,t})),(sp.quick||[]).filter(q=>q.done).map(q=>({sp,t:q,q:1})))}
 rec.sort((a,b)=>(Date.parse(b.t.updated)||0)-(Date.parse(a.t.updated)||0));
 rec.slice(0,3).forEach(({t,q},i)=>{const h=t.result_headline,o=q?(t.needs_task&&!t.ran_as_task?"needs changes":t.state==="succeeded"?"answered":t.state):h?h.label:t.state==="succeeded"?"Done":t.state;
-const x=row(t.id,q?t.question:t.title,String(o).replace(/^./,c=>c.toUpperCase()),/fail|reject/i.test(o)?"bad":/needs/.test(o)?"need":"");if(!i&&out.length)x.classList.add("g");out.push(x)});
+const x=row(t.id,q?t.question:t.title,String(o).replace(/^./,c=>c.toUpperCase()),/fail|reject/i.test(o)?"bad":/needs/.test(o)?"need":"");recent.push(x)});
+const notices=out.length;const group=(title,items,cls)=>{if(!items.length)return;const g=el("section","task-group"+(cls?" "+cls:"")),h=el("h2","",title);h.append(el("span","group-count",String(items.length)));g.append(h,...items);out.push(g)};
+group("Needs your attention",attention,"attention");group("In progress",running);group("Recent activity",recent);
+if(!attention.length&&!running.length){const e=el("div","workspace-empty");e.append(el("h3","",recent.length?"All caught up":"Your workspace is ready"),el("p","",recent.length?"No tasks are waiting for you. Your next task will appear here.":"Send a task from a connected assistant. You can review it here before your coding agent starts."));if(!recent.length){const a=el("a","","Connect an assistant");a.href="#more";e.append(a)}out.splice(notices,0,e)}
 $("stat").replaceChildren(...out)}
 // More -> Your Mac and apps: one line each, with ⋯ (Revoke); never-used ones say so
 function peers(spaces){const box=$("peers");if(!box)return;const out=[];
@@ -550,10 +554,10 @@ if(!out.length)out.push(el("p","note","No apps connected yet."));box.replaceChil
 /* More's one-line summary: who is connected, so the closed fold already answers "is my Mac / my app there?" */
 const ps=spaces.flatMap(sp=>sp.peers),nm=ps.slice(0,3).map(p=>p.name).join(", ")+(ps.length>3?" +"+(ps.length-3):"");const mn=$("more-n");if(mn)mn.textContent=(nm?nm+" · ":"")+"connect an app"}
 // the one sentence at the top: what needs you, what's running, and whether the Mac is there
-function nowLine(spaces){const n=$("nowline");if(!n)return;let need=0,run=0,wait=0;const macs=[];for(const sp of spaces){need+=sp.needs_you.filter(t=>!t.approved).length;for(const t of sp.open){if(t.state==="running")run++;else if(t.state!=="awaiting_approval"&&t.state!=="needs_input")wait++}
+function nowLine(spaces){const n=$("nowline");if(!n)return;let need=0,run=0,wait=0;const macs=[];for(const sp of spaces){need+=sp.needs_you.filter(t=>!t.approved||t.state==="needs_input").length;for(const t of sp.open){if(t.state==="running")run++;else if(t.state!=="awaiting_approval"&&t.state!=="needs_input")wait++}
 for(const p of sp.peers)if(p.kind==="runner"&&!p.never_connected)macs.push(p)}const pl=(k,a,b)=>k+" "+(k===1?a:b),parts=[];if(need)parts.push(pl(need,"task needs you","tasks need you"));if(run)parts.push(run+" running");if(wait)parts.push(wait+" waiting to start");
 const on=macs.filter(m=>m.online);parts.push(!macs.length?"no Mac connected yet":on.length===macs.length?(macs.length===1?macs[0].name+" is online":"your Macs are online"):macs.length===1?macs[0].name+" is offline, tasks wait for it":(macs.length-on.length)+" of your Macs offline");
-for(const m of macs)if(m.approval_unreachable)parts.push("approvals can't reach you from "+m.name);if(!need&&!run&&!wait&&on.length)parts.unshift("All quiet");n.textContent=parts.join(" · ").replace(/^./,c=>c.toUpperCase())}
+for(const m of macs)if(m.approval_unreachable)parts.push("approvals can't reach you from "+m.name);if(!need&&!run&&!wait&&on.length)parts.unshift("All quiet");n.dataset.state=need?"attention":!on.length?"offline":"online";n.textContent=parts.join(" · ").replace(/^./,c=>c.toUpperCase())}
 // a Mac whose runner has been down 10+ min (src/health.ts: stopped / unreachable): one line on top with what happened and the one next step
 function downBanner(spaces){const b=$("downbanner");if(!b)return;const out=[];for(const sp of spaces||[])for(const p of sp.peers||[]){const h=p.health;if(!h||!(h.state==="stopped"||h.state==="unreachable")||!(h.down_s>=600))continue;
 const x=el("p","",h.line+" ");if(h.next)x.append(el("strong","",h.next));out.push(x)}b.hidden=!out.length;b.replaceChildren(...out)}
