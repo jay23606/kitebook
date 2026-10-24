@@ -45,3 +45,11 @@ test("overlapping GC invocations share the sweep and cannot reset each other's d
   db.run("insert into blob_put values('orphan',0,1)");const a=sp.gc(),b=sp.gc();expect(a).toBe(b);release();await a;
   expect(calls).toBe(1);expect(sp.gcStats().retry_failures).toBe(1);db.close();
 });
+
+test("server dispatch and peer capabilities preserve catalog provenance and owner restrictions",async()=>{
+  const {SpaceTasks}=await import("../src/space/tasks.ts"),{db,sp}=fixture(SpaceTasks.prototype);let authoritative=false;
+  sp.blobAt=()=>"ad";sp.content=async()=>JSON.stringify({agents:["codex"],default_agent:"codex",models:{codex:["older-model"]},model_catalogs:{codex:{authoritative,source:"native"}}});
+  try {await sp.checkAgentModel("mac",{agent:"codex",model:"new-model"});expect((await sp.runnerCaps("mac")).model_catalogs.codex.authoritative).toBe(false);
+    authoritative=true;await expect(sp.checkAgentModel("mac",{agent:"codex",model:"new-model"})).rejects.toThrow("models: older-model");
+  }finally{db.close();}
+});

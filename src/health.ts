@@ -65,7 +65,7 @@ export function overall(rs: RunnerOut[]): { ok: boolean; verdict: string; next: 
 export type PreIn = { runner: string; online: boolean; last_seen: string | null; now?: number; advertised: boolean;
   agent: string | null; model?: string | null; project?: string | null;
   agents?: string[] | null; agents_detail?: { id: string; bin?: string; installed?: boolean; tasks?: boolean; issue?: string | null; responds?: boolean | null; responds_why?: string | null }[] | null;
-  models?: Record<string, string[]> | null; projects?: Record<string, any> | null; code?: Record<string, any> | null };
+  models?: Record<string, string[]> | null; model_catalogs?: Record<string, { authoritative?: boolean }> | null; projects?: Record<string, any> | null; code?: Record<string, any> | null };
 export function preflight(i: PreIn): { problems: string[]; notes: string[] } {
   const now = i.now ?? Date.now(), problems: string[] = [], notes: string[] = [], seen = i.last_seen ? Date.parse(i.last_seen) : NaN;
   if (!i.online) notes.push(Number.isFinite(seen) ? (now - seen >= STALE_MS ? `${i.runner}'s runner has been offline for ${ago(now - seen)} (last seen ${new Date(seen).toISOString().slice(0, 16).replace("T", " ")} UTC): the task waits in the queue until it's back` : `${i.runner} is reconnecting (dropped off ${ago(now - seen)} ago)`)
@@ -77,7 +77,7 @@ export function preflight(i: PreIn): { problems: string[]; notes: string[] } {
     else if (d && d.tasks === false) problems.push(`${a} on ${i.runner} can't run tasks${d.issue ? `: ${d.issue}` : ""}`);
     else if (!d && i.agents?.length && !i.agents.includes(a)) problems.push(`${a} isn't set up on ${i.runner} (it has ${i.agents.join(", ")})`);
     if (d?.responds === false) notes.push(`${a} didn't answer on ${i.runner} at its last check${d.responds_why ? ` (${d.responds_why})` : ""}: the task may fail to start`);
-    const ms = i.models?.[a]; if (i.model && Array.isArray(ms) && ms.length && !ms.some(m => m === i.model || m.endsWith("/" + i.model) || m === String(i.model).replace(/:[a-z]+$/, ""))) problems.push(`model ${i.model} isn't available for ${a} on ${i.runner}`);
+    const ms = i.models?.[a]; if (i.model && i.model_catalogs?.[a]?.authoritative === true && Array.isArray(ms) && ms.length && !ms.some(m => m === i.model || m.endsWith("/" + i.model) || m === String(i.model).replace(/:[a-z]+$/, ""))) problems.push(`model ${i.model} isn't available for ${a} on ${i.runner}`);
   }
   const p = i.project && i.project !== "home" ? i.project : null;
   if (p && i.projects && !i.projects[p]) problems.push(`project ${p} isn't on ${i.runner}`);

@@ -41,7 +41,7 @@ test("verdict: owner stopped it; never connected; no runners; one of two down", 
 });
 
 const AD = { advertised: true, agents: ["pi", "codex"], agents_detail: [{ id: "pi", installed: true, tasks: true }, { id: "codex", installed: false, tasks: false }, { id: "claude", installed: true, tasks: false, issue: "not signed in" }],
-  models: { pi: ["anthropic/claude-sonnet-4-5"] }, projects: { relay: { agent: "pi" } } };
+  models: { pi: ["anthropic/claude-sonnet-4-5"] }, model_catalogs: { pi: { authoritative: true } }, projects: { relay: { agent: "pi" } } };
 test("preflight: all there, online -> nothing to say", () => {
   expect(preflight({ runner: "mac", online: true, last_seen: at(0), now: NOW, agent: "pi", model: "claude-sonnet-4-5", project: "relay", ...AD })).toEqual({ problems: [], notes: [] });
 });
@@ -109,4 +109,9 @@ test("watchdog once: server says offline -> heal called, state + report written;
   expect(reports[0].watchdog.state).toBe("restarting"); expect(reports[0].watchdog.tries).toBe(1);
   const r2 = await once(cfg, { f, heal }); expect(r2.acts).not.toContain("restart"); expect(heals).toBe(1); expect(r2.phase).toBe("backoff");
   writeFileSync(join(h, ".kitebook", "stopped-runner"), "x"); expect((await once(cfg, { f, heal })).phase).toBe("stopped_by_owner"); expect(existsSync(join(h, ".kitebook", "watchdog.json"))).toBe(true);
+});
+
+test("preflight never treats a native/fallback or legacy catalog as an owner restriction",()=>{
+  for(const model_catalogs of [undefined,{pi:{authoritative:false}}])expect(preflight({runner:"mac",online:true,last_seen:at(0),agent:"pi",model:"new-model",...AD,model_catalogs}).problems).toEqual([]);
+  expect(preflight({runner:"mac",online:true,last_seen:at(0),agent:"pi",model:"new-model",...AD}).problems).toContain("model new-model isn't available for pi on mac");
 });
