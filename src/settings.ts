@@ -33,14 +33,14 @@ import { PASSKEY_JS } from "./auth.ts";
 
 export const settingsHeaders = PAGE_HEADERS;
 // the shared look (src/ui.ts): THEME_CSS is re-exported for older imports
-import { THEME_CSS, BASE_CSS, FOLD_CSS, FOLD_JS } from "./ui.ts";
+import { THEME_CSS, BASE_CSS, FOLD_CSS, FOLD_JS, WORKSPACE_CSS, WORKSPACE_JS, workspaceNav } from "./ui.ts";
 export { THEME_CSS };
 
 export function settingsPage(s: { acct: string; origin: string; release: string }, nonce: string) {
   // a section under More: one more fold, its label and a one-line summary (owner, 22:41: "short and meaningful"), the box inside
   const sec = (id: string, title: string, body = "") => `<details class="fold sub" id="${id}"><summary class="srow"><span>${title}</span><span class="v" id="${id}-n"></span></summary><div class="fb" id="${id}-box">${body || `<p class="note">Loading…</p>`}</div></details>`;
   // a top-level row that opens: label left, a count right; the fold holds the whole section
-  const fold = (id: string, label: string, body: string) => `<details class="fold" id="${id}"><summary class="srow"><span>${label}</span><span class="v" id="${id}-n"></span></summary><div class="fb">${body}</div></details>`;
+  const fold = (id: string, label: string, body: string, open = false) => `<details class="fold" id="${id}"${open ? " open" : ""}><summary class="srow"><span>${label}</span><span class="v" id="${id}-n"></span></summary><div class="fb">${body}</div></details>`;
   const data = JSON.stringify(s).replace(/</g, "\\u003c");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>Kitebook settings</title>
 <style>${THEME_CSS}${BASE_CSS}${FOLD_CSS}
@@ -76,16 +76,20 @@ pre.sug{max-height:320px;overflow:auto;font-size:14px}label.chk{display:flex;gap
 label.sw{display:flex;gap:14px;align-items:center;padding:8px 0;font-size:17px;font-weight:600}
 @media (max-width:560px){.code{flex-wrap:wrap}.code pre{flex-basis:100%}}
 @media print{header,.list,#todo,details#moreset>summary,details.sub:not(#recovery),#recovery>summary,button{display:none}details#moreset>*{display:block}}
-</style></head><body>
-<header><h1>Settings</h1><a href="/start">← Home</a></header>
+${WORKSPACE_CSS}
+.workspace .settings-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:28px;align-items:start}.workspace .settings-grid>.list,.workspace #moreset{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 24px 16px;margin:0}.workspace .srow,.workspace .trow{font-size:15px;min-height:60px}.workspace .v{font-size:13px}.workspace .fb{padding-bottom:18px}.workspace .fb p{max-width:75ch}.workspace details.sub{scroll-margin-top:24px}.workspace details.sub>.fb{padding:8px 0 20px}.workspace details.sub>summary.srow{font-size:14px;min-height:58px}.workspace #moreset>summary{border-top:0;font-weight:650;flex-wrap:wrap}.workspace #moreset>summary>span:first-child{flex:1 1 180px}.workspace #moreset>summary .v{font-weight:400;max-width:100%;font-size:12px;flex:1 1 100%;order:2}.workspace .settings-grid>.list>#apps>summary{border-top:1px solid var(--line)}.workspace #apps>.fb{padding-top:10px}.workspace #addr{font-size:13px;flex-wrap:wrap}.workspace #addr .v{max-width:55%;overflow-wrap:anywhere}.workspace .ah b{font-size:15px}.workspace .tag,.workspace .now,.workspace .row small{font-size:13px}.workspace .settings-grid .item,.workspace .settings-grid .app{padding:16px 0}.workspace .settings-grid .bar{gap:8px}.workspace .settings-grid .bar button{flex:0 1 auto}.workspace #todo:empty{display:none}.workspace #moreset>.fb>p.note:first-child{padding:4px 0 12px}
+@media(max-width:1150px){.workspace .settings-grid{grid-template-columns:minmax(0,1fr);gap:20px}}
+@media(max-width:760px){.workspace .settings-grid>.list,.workspace #moreset{padding-inline:16px}.workspace .v{max-width:48%}.workspace #addr .v{max-width:100%}.workspace .srow{gap:8px}.workspace .settings-grid .bar button{flex:1 1 140px}}
+</style></head><body class="workspace"><div class="workspace-shell">${workspaceNav("settings")}<main class="workspace-main" id="workspace-content" tabindex="-1">
+<header class="settings-top"><div class="heading"><h1>Settings</h1><p>Connections, permissions, and your workspace preferences.</p></div><a class="btn" href="/start">Back to workspace</a></header>
 <div id="autorunbanner" class="warn devbar" role="status" hidden></div><div id="todo"><div id="todo-d"></div><div id="todo-u"></div></div>
-<div class="list">
+<div class="settings-grid"><div class="list">
 <div class="trow" id="addr"><span>Address</span><span class="v" id="addr-v">…</span></div><p class="danger-line" id="addr-warn" hidden>This address only works on this computer.</p>
-${fold("apps", "Connected apps", `<div id="agents-box"></div><div id="apps-box"><p class="note">Loading…</p></div>`)}
+${fold("apps", "Connected apps", `<div id="agents-box"></div><div id="apps-box"><p class="note">Loading…</p></div>`, true)}
 <div id="autorunrows"></div><div id="updrows"></div>
 ${fold("devices", "Signed-in devices", `<div id="devices-box"><p class="note">Loading…</p></div>`)}
 </div>
-<details id="moreset" class="fold"><summary class="srow"><span>More</span><span class="v" id="moreset-n">Connection, approvals, updates, recovery</span></summary><div class="fb">
+<details id="moreset" class="fold" open><summary class="srow"><span>Workspace settings</span><span class="v" id="moreset-n">Connection, approvals, updates, recovery</span></summary><div class="fb">
 <p class="note">${isRoot(s.acct) ? "Signed in as the owner" : `Signed in to <b>${esc(s.acct)}</b>`}<span id="server-build"></span></p>
 ${sec("connection", "Connection")}
 ${sec("brief", "Instructions for your assistants")}
@@ -97,10 +101,11 @@ ${sec("updates", "Updates")}
 ${sec("releases", "Releases")}
 ${sec("recovery", "Recovery", `<p class="note">Sign in with a passkey, or run <code>kitebook open</code> on your Mac. A printable recovery code is optional; a new one replaces the old.</p>
 <div class="bar"><button id="rcnew" class="sec">Make a recovery code</button></div><div id="rcout" hidden><div class="code"><pre id="rcode"></pre><button id="rccopy" class="sec">Copy</button></div><div class="bar"><button id="rcprint" class="sec">Print</button></div></div>`)}
-</div></details><p id="msg" role="status" aria-live="polite"></p>
+</div></details></div></main></div><p id="msg" role="status" aria-live="polite"></p>
 <script id="st" type="application/json">${data}</script>
 <script nonce="${nonce}">
 ${FOLD_JS}
+${WORKSPACE_JS}
 ${OWNER_JS}
 ${PASSKEY_JS}
 {const mo=()=>{const h=location.hash.slice(1).split(",").filter(Boolean),all=h.includes("all");let first=null;

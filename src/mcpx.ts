@@ -15,6 +15,11 @@ const o = (properties: Record<string, any>, required: string[] = []) => ({ type:
 type TM = { title: string; ro?: 1; destr?: 1; idem?: 1; open?: 1; out?: any };
 const task = o({ id: str, title: str, state: str, from: str, target: str }, ["id", "state"]);
 const TOOLS: Record<string, TM> = {
+  sync: { title: "Recover shared workspace", ro: 1 },
+  sync_read: { title: "Read workspace snapshot file", ro: 1 },
+  sync_ack: { title: "Acknowledge a local workspace copy", idem: 1 },
+  sync_status: { title: "Workspace publication and copies", ro: 1 },
+  sync_publish: { title: "Publish artifacts and handoff", destr: 1, idem: 1 },
   revoke_self: { title: "Revoke my own access", destr: 1, idem: 1, out: o({ revoked: str, revoked_grant: str, peer: str }) },
   whoami: { title: "Who am I", ro: 1, out: o({ id: str, name: str, kind: str, account: str, spaces: arr, can: str }, ["name", "spaces"]) },
   ls: { title: "List directory", ro: 1, out: o({ path: str, entries: arr }, ["entries"]) },
@@ -99,7 +104,7 @@ const TOOLS: Record<string, TM> = {
 //   Experimental  relay_logs (recent logs/errors), ci_run, ci_status (local CI); off they answer needs_owner / nothing, so they aren't listed
 // brief_propose is listed so a connector UI can suggest a brief change; the brief itself arrives in initialize and describe, so the brief
 // tool stays unlisted (callable by name) to keep the list short.
-export const ASSISTANT_TOOLS = ["agent_models", "mcp_status", "brief_propose", "describe", "presence", "peers", "whoami", "task_create", "ask", "ask_get", "ask_to_task", "task_promote", "task_get", "task_list", "task_status",
+export const ASSISTANT_TOOLS = ["agent_models", "mcp_status", "brief_propose", "describe", "presence", "peers", "whoami", "task_create", "ask", "ask_get", "ask_to_task", "task_promote", "task_get", "task_list", "task_status", "sync", "sync_read", "sync_ack", "sync_status", "sync_publish",
   "task_steer", "task_answer", "task_cancel", "task_message", "inbox", "ack", "notify", "change", "code_status", "ls", "read", "grep", "glob", "write", "patch", "kb_search", "kb_add", "kb_get", "relay_update", "status"];
 export const SESSION_TOOLS = { read: ["sessions_search", "session_get", "session_status"], write: ["sessions_search", "session_get", "session_status", "session_create", "session_send"] } as Record<string, string[]>; // listed once the owner allowed Agent sessions
 export const AGENT_TOOLS = ["presence_report"], TARGET_TOOLS = ["task_claim", "task_progress", "task_complete"], EXPERIMENTAL_TOOLS = ["relay_logs", "ci_run", "ci_status"]; // listed while Experimental is on (describe.experimental), when they answer

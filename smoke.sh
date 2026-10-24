@@ -208,13 +208,16 @@ h glob 'shared/**' | jq -e '.files==["shared/race.dat","shared/same.md","shared/
   && h ls nosuch 2>&1 | grep -q "no such directory" && h ls shared/sp 2>&1 | grep -q "no such directory" && pass "glob/ls by prefix range: same results, 404 kept" || die "glob/ls range: $(h glob 'shared/**' | jq -c .files)"
 
 # MCP front door
+WBC=0; python3 scripts/workspace-browser.py "$KITEBOOK_URL" --jar "${FJ0:-}" > $T/workspace-browser.log 2>&1 || WBC=$?
+if [ "$WBC" = 3 ]; then skipb "workspace browser (no Chromium/Playwright)"; elif [ "$WBC" != 0 ]; then cat $T/workspace-browser.log; die "workspace browser"; fi
+KITEBOOK_RECOVERY_STATE=$T/workspace-recovery.json bun scripts/workspace-check.ts > $T/workspace-recovery.log 2>&1 || { cat $T/workspace-recovery.log; die "workspace recovery"; }
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.serverInfo|.name=="Kitebook" and .title=="Kitebook" and (.description|test("knowledge base for your AI assistants and coding agents")) and .version' >/dev/null || die "mcp initialize"
 N=$(curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq '.result.tools|length'); [ "$N" -gt 15 ] || die "mcp tools/list ($N tools)"
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"path":"shared/spec.md"}}}' | jq -e '.result.structuredContent.content=="# Spec v1\n"' >/dev/null && pass "mcp tools/call read" || die "mcp tools/call read"
 
 # git-first: the repos/ mirror is opt-in (no runner has opted in yet), so nothing advertises it
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '[.result.tools[].name]|index("has")==null and index("task_create")!=null' >/dev/null \
-  && ! curl -s $KITEBOOK_URL/llms.txt | grep -q 'repos/' && curl -s $KITEBOOK_URL/llms.txt | grep -q 'Kitebook holds live state only' && h describe | jq -e '.mirror==null and .retention_days==30 and .git.push' >/dev/null \
+  && ! curl -s $KITEBOOK_URL/llms.txt | grep -q 'repos/' && curl -s $KITEBOOK_URL/llms.txt | grep -q 'Kitebook keeps durable shared files' && h describe | jq -e '.mirror==null and .retention_days==30 and .git.push' >/dev/null \
   && pass "mirror off by default: no has tool, no repos/ in llms.txt, describe has no mirror; guide says code lives in git" || die "mirror default off"
 
 # local project + runner with a fake agent (approve=auto is test-only)
@@ -365,12 +368,12 @@ h task_get $ID2 | jq -e ".note|test(\"allowlisted\")" >/dev/null && pass "reject
 
 # MCP polish: tool titles/annotations/outputSchemas, resources (tasks, files), prompts that build a ready task_create
 mc(){ curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $1" -H content-type:application/json -d "$2"; }
-# fix-agents: tools/list by caller. Assistants get ~30 (33 with runner-health's status, 32 with assistant-brief's brief_propose and dev-update-from-assistant's relay_update) (no runner-only tools); the runner gets all; a task addressed to you adds the target tools
+# tools/list by caller: assistants get 38 including restart recovery (no runner-only tools); the runner gets all; a task addressed to you adds the target tools
 RONLY='["policy","settings_report","code_report","task_live","task_approval","approval_page","approval_wait","task_release","task_steer_take","task_claim","task_progress","task_complete","presence_report","health_report","has"]'
 mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-a.json; mc $MAC '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-r.json
 TGT=$(bun client/admin.ts peer tgt assistant 2>/dev/null); bun client/admin.ts grant tgt main read "shared/**" >/dev/null; mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t0.json
 TGTID=$(h task_create --target tgt --title "for tgt" --instructions "x" | jq -r .id); mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t1.json; h task_cancel --id $TGTID >/dev/null 2>&1 || true
-jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 35 and ($n|length) >= 25 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
+jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 40 and ($n|length) >= 25 and (["sync","sync_read","sync_ack","sync_status","sync_publish"] - $n | length)==0 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
   and (["agent_models","mcp_status","describe","presence","task_create","ask","ask_get","task_steer","task_answer","inbox","ack","task_get","kb_search","relay_update","status"]|all(. as $x|$n|index($x)))
   and ($n|index("check")|not) and ($n|index("changes")|not) and ($n|index("cancel_all")|not)' $T/tl-a.json >/dev/null \
   && jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) > 50 and ([$ro[]|select(. != "has")|select(. as $x|$n|index($x)|not)]|length==0)' $T/tl-r.json >/dev/null \
@@ -380,7 +383,7 @@ jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 35 an
  \
   && mc $HARK '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mcp_status","arguments":{}}}' | jq -e '.result.structuredContent | .reload_required and .applied==false and (.tool_revision|test("^[a-f0-9]{64}$")) and (.tools|index("agent_models"))' >/dev/null \
   || { jq -c '[.result.tools[].name]' $T/tl-a.json $T/tl-t0.json $T/tl-t1.json; die "mcp tools by caller"; }
-mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.instructions | test("Start here: describe") and test("ask \\{question\\}") and test("task_steer") and test("after its current run finishes") and test("task_answer") and test("presence") and test("inbox on a schedule") and test("Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI") and (test("ONE call")|not) and (test("changes\\(since\\)")|not)' >/dev/null \
+mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.instructions | test("kb_search") and test("sync_publish") and test("sync_ack") and test("if_match") and test("ask \\{question\\}") and test("task_steer") and test("after its current run finishes") and test("task_answer") and test("presence") and test("inbox on a schedule") and test("Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI") and (test("ONE call")|not) and (test("changes\\(since\\)")|not)' >/dev/null \
   && mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '(.result.tools[]|select(.name=="task_steer")|.description|test("after the agent.s current run finishes")) and (.result.tools[]|select(.name=="inbox")|.description|test("^The polling call")) and (.result.tools[]|select(.name=="describe")|.description|test("^Start here"))' >/dev/null \
  || { mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -r .result.instructions; die "mcp instructions"; }
 mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' | jq -e '.result.protocolVersion=="2025-06-18" and .result.capabilities.resources.subscribe==false and .result.capabilities.prompts' >/dev/null || die "mcp caps"
@@ -683,6 +686,7 @@ curl -sf $KITEBOOK_URL/health >/dev/null 2>&1 && die "kitebook did not stop"
 KITEBOOK_EVENTS_TEST=1 KITEBOOK_OPEN_SIGNUP=1 KITEBOOK_ALLOWED_HOSTS=kb-tunnel.test cf dev > $T/server2.log 2>&1 & SP=$!   # restarted with open signup: the /start tests below use web signup; kb-tunnel.test: the tunnel name of the auth-500 checks
 for i in $(seq 1 60); do curl -sf $KITEBOOK_URL/health >/dev/null && break; sleep 1; done
 curl -sf $KITEBOOK_URL/health >/dev/null || { cat $T/server2.log; die "server did not restart"; }
+KITEBOOK_RECOVERY_STATE=$T/workspace-recovery.json bun scripts/workspace-check.ts --resume >> $T/workspace-recovery.log 2>&1 || { cat $T/workspace-recovery.log; die "workspace after restart"; }
 bun $T/flaky.ts $T/flaky2.jsonl 0 & FKP=$!; sleep 0.3
 h stat shared/co/late.md >/dev/null # ordinary traffic; the persisted alarm (or the wake-up safety net) drives the outbox
 for i in $(seq 1 80); do grep -q late.md $T/flaky2.jsonl 2>/dev/null && break; sleep 0.25; done
@@ -930,9 +934,15 @@ cat > $T/fleet.json <<FJ
  "projects":{"ps":{"path":"$PS","agent":"sp","verify":["test -f spec_ok.txt","test -f plan_done.txt","test -f never.txt","nosuchtool-xyz --check"]},"pq":{"path":"$PQ","agent":"ask"},"pg":{"path":"$PG","agent":"steer"},"pr":{"path":"$PR","agent":"fix","verify":["test -f fixed.txt"]},"pa":{"path":"$PA","agent":"par"},"pb":{"path":"$PB","agent":"par"},"pc":{"path":"$PC","agent":"hang"},"pd":{"path":"$PD","agent":"deps"},"pe":{"path":"$PE","agent":"live"},"pf":{"path":"$PF","agent":"pi","verify":["sleep 3 && test -f pi.txt"]},"pm":{"path":"$PM","agent":"gemini"}}}
 FJ
 KITEBOOK_TEST=1 HOME=$T PATH="$T/fakepi:$PATH" bun client/runner.ts $T/fleet.json > $T/fleet.log 2>&1 & RF=$!
-for i in $(seq 1 20); do h cat shared/runners/fleet.json 2>/dev/null | jq -e '.models.mdl' >/dev/null 2>&1 && break; sleep 0.5; done
-h cat shared/runners/fleet.json | jq -e '.models.mdl==["fast-1","smart-2"] and .model_catalogs.mdl.authoritative and .model_catalogs.mdl.source=="native" and (.model_catalogs.claude.authoritative|not) and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
-h task_create --target fleet --title x --instructions y --project pa --agent mdl --model nope 2>&1 | grep -q "models: fast-1, smart-2" || die "bad model"
+FLEET_AD=""
+for i in $(seq 1 20); do
+  if FLEET_AD=$(h cat shared/runners/fleet.json 2>/dev/null) && [ -n "$FLEET_AD" ] && jq -e '.models.mdl' <<< "$FLEET_AD" >/dev/null 2>&1; then break; fi
+  sleep 0.5
+ done
+# jq may succeed without producing any output when its input is empty; the fetch and nonempty checks are part of readiness.
+[ -n "$FLEET_AD" ] && printf '%s\n' "$FLEET_AD" | jq -e '.models.mdl==["fast-1","smart-2"] and .model_catalogs.mdl.authoritative and .model_catalogs.mdl.source=="native" and (.model_catalogs.claude.authoritative|not) and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
+BAD_MODEL=$(h task_create --target fleet --title x --instructions y --project pa --agent mdl --model nope 2>&1 || true)
+printf '%s\n' "$BAD_MODEL" | grep -q "models: fast-1, smart-2" || { printf '%s\n' "$BAD_MODEL"; h describe | jq '{runners:[.runners[]|select(.name=="fleet")|{name,agents,models,model_catalogs}]}'; die "bad model"; }
 h task_create --target fleet --title x --instructions y --project pa --agent nope 2>&1 | grep -q "agents: pi, codex, claude" || die "bad agent"
 MD=$(h task_create --target fleet --title "model pick" --instructions "say args" --project pa --agent mdl --model smart-2 | jq -r .id)
 waitst $MD "succeeded failed" || true
@@ -1006,8 +1016,8 @@ pk "default" --project pa; [ "$RES" = '["par",null,"default"]' ] && h task_get $
 # --- task spec v2: structured spec, refusals with reasons, enforcement after the run, plan -> task_promote, describe ---
 h describe | jq -e '(.runners[]|select(.name=="fleet")|.online and .spec.version==2 and (.projects.ps.verify|index("test -f spec_ok.txt")) and (.agents|index("sp")) and .max_parallel==3 and has("hours")) and .task_spec.version==2 and (.task_spec.modes==["plan","execute"]) and (.peers|map(.name)|index("hark"))' >/dev/null && pass "describe: capability manifest (runners: online, agents, projects + verify cmds, spec support; task spec schema)" || { h describe; die "describe"; }
 # frictions: which code runs where, for signed-in callers only: describe.server (baked in at build) and each runner's build; /health unchanged
-HC=$(git rev-parse HEAD); h describe | jq -e --arg c "$HC" '(.server|.commit==$c and (.version|test("^(main|dev|local)-[0-9.]+-[0-9a-f]{7}$|^v[0-9]")) and (.channel|test("^(main|dev|local)$")) and (.built_at|length>0))
-  and (.runners[]|select(.name=="fleet")|.build|.commit==$c and (.channel|test("^(main|dev|local)$")) and (.branch|length>0))' >/dev/null && [ "$(curl -s $KITEBOOK_URL/health)" = '{"ok":true}' ] \
+HC=$(git rev-parse HEAD); h describe | jq -e --arg c "$HC" '. as $d | (.server|.commit==$c and (.version|test("^(main|dev|local)-[0-9.]+-[0-9a-f]{7}$|^v[0-9]")) and (.channel|test("^(main|dev|local)$")) and (.built_at|length>0))
+  and (.runners[]|select(.name=="fleet")|.build|.commit==$c and .channel==$d.server.channel and .version==$d.server.version and (.branch|length>0))' >/dev/null && [ "$(curl -s $KITEBOOK_URL/health)" = '{"ok":true}' ] \
   && curl -sD $T/hheaders -o /dev/null $KITEBOOK_URL/health && grep -qi '^x-kitebook-mcp-revision: [0-9a-f]' $T/hheaders \
   && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $KITEBOOK_URL/v1/describe -d '{"space":"main"}')" = 401 ] \
  || { h describe | jq '{server, b: [.runners[]|{name, build}]}'; curl -s $KITEBOOK_URL/health; die "describe builds"; }
@@ -2148,7 +2158,7 @@ trap 'kill $SP ${IMP:-} 2>/dev/null; killmine node_modules/.bin/vite; killmine "
 for i in $(seq 1 40); do grep -q "approvals:" $T/im.log && break; sleep 0.5; done
 HOME=$IH KITEBOOK_NO_OPEN=1 bun $IH/.kitebook/current/runner.ts open --print > $T/imo.out 2>&1; IMU=$(grep -o "$O/start#login=[^ ]*" $T/imo.out)
 echo "$IMU" | grep -Eq "#login=ll\.erin\.[A-Za-z0-9_-]+&trust=[A-Za-z0-9_-]{30,}$" || { cat $T/imo.out $T/im.log; die "kitebook open trust link"; }
-BCT=0; python3 scripts/browser-check.py "$IMU" --profile $T/prof1 --wait-gone "Signing in" --click "#more > summary" --expect "Signed in to erin" --linger 3 > $T/bct.out 2>&1 || BCT=$?
+BCT=0; python3 scripts/browser-check.py "$IMU" --profile $T/prof1 --wait-gone "Signing in" --click 'a[href="/start#tasks"]' --click "#more > summary" --expect "Signed in to erin" --linger 3 > $T/bct.out 2>&1 || BCT=$?
 if [ $BCT = 3 ]; then skipb "browser Settings checks: no Chromium/Playwright here"; else
 for i in $(seq 1 30); do [ "$(jq '.ownerKeys|length' $PC2)" -gt "$IMNK" ] && break; sleep 0.5; done
 [ $BCT = 0 ] && [ "$(jq '.ownerKeys|length' $PC2)" = $((IMNK + 1)) ] && grep -q "settings: trusted .* signed in with kitebook open" $T/im.log && pol && jq -e '.result.owner_keys|map(select(.proof))|length==1' $T/pol.json >/dev/null \
@@ -2942,11 +2952,11 @@ sed 's#from *"cloudflare:workers"#from "data:text/javascript,export class Durabl
 # additions, ~8 KB gzip of runner text) put dev + phone-approve at 933.2 gzip, 3236 raw
 # 938 since hosted-prep (2026-10-23): the account model groundwork (src/account-store.ts users + audit + usage counters, src/identity.ts,
 # client/account.ts) puts dev + it at 935.5 gzip, 3243 raw (raw budget unchanged)
-# 960 / raw 3300: model discovery adapter served to runners + session metadata, MCP revisions and cost guards (+~7 KB gzip).
-BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 960) && echo "$BS" | jq -e '.raw_kb < 3300' >/dev/null \
+# Combined workspace/UI and agent discovery: measured about 3353 KiB raw / 971 KiB gzip, including served runner files.
+BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 980) && echo "$BS" | jq -e '.raw_kb < 3380' >/dev/null \
   && [ "$(bun -e "await import('$T/bundle-eval.mjs'); console.log(typeof Reflect.getMetadata)")" = undefined ] \
   && grep -q 'from *"cloudflare:workers"' $BJ && [ -z "$(ls .cloudflare/output/v0/workers/default/bundle/*.js | grep -v '/index.js$')" ] \
-  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 960; includes model/session discovery and MCP revisions), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
+  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 980; includes durable workspace, glass UI and agent discovery), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
 # fix-security P0: the Mac's production server (scripts/serve.sh, what mac-host.sh runs at login) is the built bundle on workerd, data outside the
 # project folder; it carries a cf dev Kitebook over (scripts/migrate-cfdev.ts: DO SQLite as is, simulated R2 -> blobs/<sha256> + refs, hashes checked)
 SVP=$((PORT + 65)); SURL=http://127.0.0.1:$SVP; PORT=$SVP KITEBOOK_DATA=$T/srv bash scripts/serve.sh > $T/serve.log 2>&1 & SVPID=$!
@@ -3181,13 +3191,14 @@ SGT=$(bun client/admin.ts peer sig runner 2>/dev/null); bun client/admin.ts gran
 # this section runs ~15 tasks back to back on one runner token; on a slow box its final reports crossed the 600/min default and a task
 # stayed "running" (the rate limit has its own test), so this one peer gets no limit here
 bun client/admin.ts ratelimit main 0 sig >/dev/null
-SGJ=$T/sgj; mkrepo $SGJ; mkdir -p $T/sgh; echo "CTXMARK-unsigned repo notes" > $SGJ/CONTEXT.md; git -C $SGJ add -A; git -C $SGJ -c user.name=t -c user.email=t@t commit -qm ctx
+SGNP=$((PORT + 59)); SGJ=$T/sgj; mkrepo $SGJ; mkdir -p $T/sgh; echo "CTXMARK-unsigned repo notes" > $SGJ/CONTEXT.md; git -C $SGJ add -A; git -C $SGJ -c user.name=t -c user.email=t@t commit -qm ctx
 cat > $T/sig.json <<SJ
-{"url":"$KITEBOOK_URL","token":"$SGT","space":"main","approve":"auto","access":"full","requireSignedAuto":true,"ntfy":{"topic":"sg","server":"http://127.0.0.1:$SP_NTFY"},
+{"url":"$KITEBOOK_URL","token":"$SGT","space":"main","approve":"auto","access":"full","requireSignedAuto":true,"ntfy":{"topic":"sg","server":"http://127.0.0.1:$SGNP"},
  "agents":{"ok":["sh","-c","echo ran >> ran.txt; echo ran"],"ok2":["sh","-c","echo reviewed >> ran.txt; echo reviewed"],"kbp":["sh","-c","printf '%s' \"\$1\" > $T/kbp.txt; echo ran","sh","{prompt}"]},"projects":{"sgj":{"path":"$SGJ","agent":"ok"}}}
 SJ
 HOME=$T/sgh bun client/runner.ts trust add $T/sig.json hark ed25519:bogus 2>&1 | grep -q "not an Ed25519" && HOME=$T/sgh bun client/runner.ts trust add $T/sig.json hark "$PUB" >/dev/null && jq -e --arg p "$PUB" '.trustedKeys.hark==[$p]' $T/sig.json >/dev/null && [ "$(fmode $T/sig.json)" = 600 ] || die "trust add"
-: > $T/ntfy-sig.jsonl; bun $T/ntfy.ts $T/ntfy-sig.jsonl > /dev/null 2>&1 & NP4=$!
+# A split run may leave the fleet phone alive; the signature fixture owns a separate port.
+: > $T/ntfy-sig.jsonl; SP_NTFY=$SGNP bun $T/ntfy.ts $T/ntfy-sig.jsonl > $T/ntfy-sig.log 2>&1 & NP4=$!
 KITEBOOK_TEST=1 HOME=$T/sgh bun client/runner.ts $T/sig.json > $T/sig.log 2>&1 & RSG=$!
 trap 'kill $SP ${RSG:-} ${NP4:-} 2>/dev/null; killmine node_modules/.bin/vite; killmine "workerd serve"' EXIT
 for i in $(seq 1 30); do h cat shared/runners/sig.json 2>/dev/null | jq -e '.signing' >/dev/null 2>&1 && break; sleep 0.5; done
@@ -3545,7 +3556,9 @@ chmod -R u+w $UH/.kitebook-server $TN/mh $T/srv 2>/dev/null || true; rm -rf $UH/
 # Fake Mac like update-path's: a clone at afa48a4 (runner with no watcher), origin/main = this commit, the server still on cf dev, and a
 # runner job that launchd brings back when it exits (KeepAlive, here a loop). First time: git pull + kitebook restart; then pulls alone.
 U3=$T/u3; U3P=$((PORT + 88)); U3S=$U3/relay-cf; U3C=$U3/code-kitebook; U3L=$U3/lc; U3D=$U3/upstream; mkdir -p $U3L $U3/Library/LaunchAgents $U3/Library/Logs $U3/.cloudflared $U3/proj $U3S
-git init -q --bare $U3/origin.git && git push -q $U3/origin.git HEAD:refs/heads/main && git clone -q -b main $U3/origin.git $U3C && git -C $U3C reset -q --hard afa48a4 && ln -s $PWD/node_modules $U3C/node_modules
+# A public export starts new history. Model the same fast-forward with today's tree on the legacy fixture parent, only in this test.
+git merge-base --is-ancestor afa48a4 HEAD || HEADX=$(git commit-tree HEAD^{tree} -p afa48a4 -m 'smoke upgrade fixture')
+git init -q --bare $U3/origin.git && git push -q $U3/origin.git $HEADX:refs/heads/main && git clone -q -b main $U3/origin.git $U3C && git -C $U3C reset -q --hard afa48a4 && ln -s $PWD/node_modules $U3C/node_modules
 git clone -q -b main $U3/origin.git $U3D && git -C $U3D config user.name up && git -C $U3D config user.email up@x && git -C $U3C config user.name me && git -C $U3C config user.email me@x
 git archive afa48a4 | tar -x -C $U3S; ln -s $PWD/node_modules $U3S/node_modules; cp -r $T/oldstate $U3S/.relay-data; U3ADM="old-admin-$(openssl rand -hex 8)"; echo "ADMIN_TOKEN=$U3ADM" > $U3S/.dev.vars
 git -C $U3/proj init -q -b main && echo hi > $U3/proj/a && git -C $U3/proj add -A && git -C $U3/proj -c user.name=t -c user.email=t@t commit -qm i
@@ -3942,7 +3955,7 @@ bun client/admin.ts grant bhark brief read,write,dispatch "**" >/dev/null; bun c
 bm(){ curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $1" -H content-type:application/json -d "$2"; }
 bv(){ local d='{}'; curl -s -X POST $KITEBOOK_URL/v1/$2 -H "authorization: Bearer $1" -H content-type:application/json -d "${3:-$d}"; }
 BI=$(bm $BH '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -r .result.instructions)
-echo "$BI" | grep -q "Start here: describe" && echo "$BI" | grep -q "The owner's standing instructions for you (brief etag" && echo "$BI" | grep -q "Ask the owner before anything that deploys" \
+echo "$BI" | grep -q "sync_publish" && echo "$BI" | grep -q "The owner's standing instructions for you (brief etag" && echo "$BI" | grep -q "Ask the owner before anything that deploys" \
   && bv $BH describe | jq -e '(.result|keys_unsorted[0])=="brief" and (.result.brief.text|test("Instructions for your assistants")) and (.result.brief.etag|length)==12 and .result.brief.default==true and .result.brief.updated==null' >/dev/null \
  || { echo "$BI"; bv $BH describe | jq .result.brief; die "brief default"; }
 BJ=$T/brief.jar; : > $BJ; BL=$(bun client/admin.ts open --print | tail -1 | sed 's/.*#login=//')
@@ -4189,12 +4202,12 @@ env -u XDG_CONFIG_HOME HOME=$XH XLOG=$XLOG KITEBOOK_TEST=1 bun client/runner.ts 
 printf '{"url":"%s","token":"%s","space":"main","approve":"browser","roots":[],"supervise":true}\n' "$KITEBOOK_URL" "$BOX" > $XH/sv.json
 XE="env -u XDG_CONFIG_HOME -u XDG_STATE_HOME HOME=$XH KITEBOOK_TEST=1 KITEBOOK_SUP_PAUSE_MS=500 KITEBOOK_RUNNER_CONFIG=$XH/sv.json"
 $XE bun client/runner.ts install $XH/sv.json > $XH/sv-install.out 2>&1
-for i in $(seq 1 40); do $XE bun client/cli.ts status > $XH/sv-status.out 2>&1; grep -q "^runner   up" $XH/sv-status.out && break; sleep 0.5; done
-C1=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null); for i in $(seq 1 40); do h describe | jq -e '.runners[]|select(.name=="xbox")|.online' >/dev/null && break; sleep 0.5; done
+for i in $(seq 1 40); do $XE bun client/cli.ts status > $XH/sv-status.out 2>&1; C1=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null || true); [ -n "$C1" ] && kill -0 "$C1" 2>/dev/null && grep -q "^runner   up" $XH/sv-status.out && break; sleep 0.5; done
+[ -n "$C1" ] || die "supervisor child did not start"; for i in $(seq 1 40); do h describe | jq -e '.runners[]|select(.name=="xbox")|.online' >/dev/null && break; sleep 0.5; done
 grep -q "Kitebook's supervisor" $XH/sv-status.out && grep -q "^runner   up" $XH/sv-status.out && [ -f $XH/.config/autostart/kitebook-kitebook-runner.desktop ] && grep -q "supervise.ts run kitebook-runner" $XH/.config/autostart/kitebook-kitebook-runner.desktop \
   && h describe | jq -e '.runners[]|select(.name=="xbox")|.online' >/dev/null \
  || { cat $XH/sv-install.out $XH/sv-status.out; tail -20 $XH/.local/state/kitebook/kitebook-runner.log; die "supervisor install"; }
-$XE bun client/cli.ts restart runner > $XH/sv-r.out 2>&1; for i in $(seq 1 40); do C2=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null); [ -n "$C2" ] && [ "$C2" != "$C1" ] && break; sleep 0.25; done
+$XE bun client/cli.ts restart runner > $XH/sv-r.out 2>&1; for i in $(seq 1 40); do C2=$(cat $XH/.kitebook/svc/kitebook-runner/child.pid 2>/dev/null || true); [ -n "$C2" ] && [ "$C2" != "$C1" ] && break; sleep 0.25; done
 $XE bun client/cli.ts stop runner > $XH/sv-s.out 2>&1; sleep 1.5; $XE bun client/cli.ts status > $XH/sv-st2.out 2>&1
 $XE bun client/cli.ts logs runner -n 50 > $XH/sv-l.out 2>&1
 [ -n "$C2" ] && [ "$C2" != "$C1" ] && ! kill -0 $C2 2>/dev/null && grep -q "stopped (stays stopped until kitebook start)" $XH/sv-s.out && grep -q "^runner   not running: stopped with kitebook stop. Start it: kitebook start runner" $XH/sv-st2.out && grep -q "connected as xbox" $XH/sv-l.out \

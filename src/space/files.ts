@@ -9,7 +9,7 @@ import { SpaceEvents } from "./events.ts";
 import type { Space, Op } from "../space.ts";
 
 export class SpaceFiles extends SpaceEvents {
-  async commit(actor: Peer, changes: Change[], message: string) {
+  async commit(actor: Peer, changes: Change[], message: string, receipt?: { id: string; fingerprint: string }) {
     // the assistant brief is the owner's (src/brief.ts): no app writes, moves or deletes it, whatever its path grants; apps use brief_propose
     if (actor.id !== "owner" && actor.id !== "relay" && changes.some(c => c.path === BRIEF_PATH))
       throw new RelayError(403, `${BRIEF_PATH} holds the owner's instructions for assistants: only the owner changes it (Settings -> Instructions for your assistants). Suggest a change with brief_propose`);
@@ -47,8 +47,13 @@ export class SpaceFiles extends SpaceEvents {
     // writes below run in one synchronous transaction (no await between check and write = no lost update).
     const at = now();
     const id = (await sha256(crypto.randomUUID() + "\n" + at + "\n" + actor.name + "\n" + hashed.map(h => `${h.c.path}:${h.sha}`).join("\n"))).slice(0, 40);
-    let trimmed = false; const same: string[] = []; let noop = false;
+    let replay: any = null; let trimmed = false; const same: string[] = []; let noop = false;
     this.ctx.storage.transactionSync(() => {
+      if (receipt) {
+        for (const { c } of hashed) this.need(actor, c.delete ? "delete" : "write", c.path); // grants can change during hashing/blob uploads
+        const previous = this.sql.exec("select fingerprint,result from sync_receipts where peer=? and id=?", actor.id, receipt.id).toArray()[0] as any;
+        if (previous) { if (previous.fingerprint !== receipt.fingerprint) throw new RelayError(409, "operation_id already used with different changes"); replay = JSON.parse(previous.result); return; }
+      }
       for (const { c } of hashed) {
         const cur = this.blobAt(c.path);
         if (c.if_match !== undefined && (c.if_match === "none" ? null : c.if_match) !== cur)
@@ -58,7 +63,12 @@ export class SpaceFiles extends SpaceEvents {
       // a write whose bytes equal the file as it is (a runner re-advertising after a restart, an idempotent rewrite) is not a change:
       // no commit row, no event fan-out, no KB re-index. A call where every change is like that commits nothing and says unchanged.
       for (let i = hashed.length - 1; i >= 0; i--) { const h = hashed[i]; if (h.sha && h.sha === this.blobAt(h.c.path) && hashed.filter(x => x.c.path === h.c.path).length === 1) { hashed.splice(i, 1); kbPrep.delete(h.c.path); same.push(h.c.path); } }
-      if (!hashed.length) { noop = true; return; }
+      if (!hashed.length) {
+        noop = true;
+        if (receipt) { const shas = Object.fromEntries(same.map(p => [p, this.blobAt(p)])); const commit = this.sql.exec("select id from commits order by seq desc limit 1").toArray()[0]?.id ?? null;
+          this.sql.exec("insert into sync_receipts values(?,?,?,?)", actor.id, receipt.id, receipt.fingerprint, JSON.stringify({ commit, shas, unchanged: true })); }
+        return;
+      }
       // a blob we reused without re-uploading may have been GC'd by retention during the awaits above
       for (const h of hashed) if ((h.reuse && h.loc !== "inline") || h.c.copyOf) if (!this.sql.exec("select 1 from blobs where sha=?", h.sha).toArray().length)
         throw new RelayError(409, `content for ${h.c.path} was just garbage-collected; send it again`);
@@ -69,12 +79,14 @@ export class SpaceFiles extends SpaceEvents {
         if (sha) this.sql.exec("insert or replace into tree values(?,?,?,?)", c.path, sha, size, seq);
         else this.sql.exec("delete from tree where path=?", c.path);
       }
+      if (receipt) this.sql.exec("insert into sync_receipts values(?,?,?,?)", actor.id, receipt.id, receipt.fingerprint, JSON.stringify({ commit: id, shas: Object.fromEntries([...same.map(p => [p, this.blobAt(p)]), ...hashed.map(h => [h.c.path, h.sha])]) }));
       for (const [p, es] of kbPrep) KB.reindex(this, p, es, seq, actor);
       for (const { sha } of hashed) if (sha) this.sql.exec("delete from blob_put where sha=?", sha); // the upload is owned by a row now
       // repos/** keeps the current tree + a bounded history (git has the real one); superseded versions leave for blob GC to collect
       const rp = hashed.filter(h => h.c.path.startsWith("repos/")).map(h => h.c.path);
       if (rp.length && this.trimRepos(rp)) { this.sql.exec("insert or replace into meta values('gc_dirty',?)", String(Date.now())); trimmed = true; }
     });
+    if (replay) return replay;
     if (trimmed) this.armAlarm(Date.now() + 60_000).catch(() => {}); // the alarm marks what the trim orphaned (coalesced, not per commit)
     const shas: Record<string, string | null> = {};
     for (const p of same) shas[p] = this.blobAt(p);
@@ -179,6 +191,18 @@ export function fileOps(this: Space): Record<string, Op> {
     },
     batch: async (peer, a) => {
       if (!Array.isArray(a.changes) || !a.changes.length || a.changes.length > 500) throw new RelayError(400, "changes: 1-500 entries");
+      if (a.operation_id !== undefined && !/^[a-zA-Z0-9_-]{1,100}$/.test(String(a.operation_id))) throw new RelayError(400, "invalid operation_id");
+      const receipt = a.operation_id ? { id: String(a.operation_id), fingerprint: await sha256(JSON.stringify({ changes: a.changes, message: a.message ?? null })) } : undefined;
+      if (receipt) {
+        // A retry must not reapply string edits/read a now-deleted blob before looking up its committed receipt.
+        for (const c of a.changes) this.need(peer, c.delete ? "delete" : "write", normPath(c.path));
+        const previous = this.sql.exec("select fingerprint,result from sync_receipts where peer=? and id=?", peer.id, receipt.id).toArray()[0] as any;
+        if (previous) {
+          if (previous.fingerprint !== receipt.fingerprint) throw new RelayError(409, "operation_id already used with different changes");
+          const r = JSON.parse(previous.result), warn = a.changes.filter((c: any) => !c.delete && codeWarn(normPath(c.path))).map((c: any) => normPath(c.path));
+          return { commit: r.commit, shas: r.shas, ...(warn.length ? { warning: "code_outside_change", warning_paths: warn.slice(0, 50) } : {}) };
+        }
+      }
       const cs: Change[] = [], skipped: { path: string; reason: string }[] = [];
       for (const c of a.changes) try { cs.push(await (async (): Promise<Change> => {
         const path = normPath(c.path); this.need(peer, c.delete ? "delete" : "write", path);
@@ -192,7 +216,7 @@ export function fileOps(this: Space): Record<string, Op> {
           const content = applyEdits(path, await this.content(sha), c.edits); guard(path, content);
           return { path, content, if_match: c.if_match ?? sha };
         }
-        if (c.content_base64 !== undefined && !c.delete) { guard(path); return { path, b64: String(c.content_base64), if_match: c.if_match }; }
+        if (c.content_base64 !== undefined && !c.delete) { const bytes = b64decode(String(c.content_base64)); guard(path, looksText(bytes) ? new TextDecoder().decode(bytes) : undefined); return { path, b64: String(c.content_base64), if_match: c.if_match }; }
         if (!c.delete) guard(path, String(c.content ?? ""));
         return { path, content: c.delete ? undefined : String(c.content ?? ""), delete: !!c.delete, if_match: c.if_match };
       })()); } catch (e: any) {
@@ -200,7 +224,7 @@ export function fileOps(this: Space): Record<string, Op> {
       }
       if (!cs.length) return { commit: null, shas: {}, skipped };
       if (new Set(cs.map(c => c.path)).size !== cs.length) throw new RelayError(400, "one entry per path (put several edits in one entry's edits list)");
-      const r = await this.commit(peer, cs, a.message ?? `batch ${cs.length} changes`);
+      const r = await this.commit(peer, cs, a.message ?? `batch ${cs.length} changes`, receipt);
       const warn = cs.filter(c => !c.delete && codeWarn(c.path)).map(c => c.path);
       return { commit: r.commit, shas: r.shas, ...(skipped.length ? { skipped } : {}), ...(warn.length ? { warning: "code_outside_change", warning_paths: warn.slice(0, 50) } : {}) };
     },

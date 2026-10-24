@@ -10,7 +10,7 @@ export async function connectionCheck(address:string, token:string|null, space:s
   const failure=(e:any)=>{const code=String(e?.cause?.code??e?.code??"");return /ENOTFOUND|EAI_AGAIN/.test(code)?"dns":/CERT|TLS|SSL/.test(code)?"tls":/timeout|abort/i.test(String(e?.name))?"timeout":"network";};
   try {const r=await fetcher(result.server+"/health",{signal:AbortSignal.timeout(10000),redirect:"error"});result.health=r.ok?"reachable":"http-"+r.status;await r.body?.cancel();}
   catch(e){result.health=failure(e);return result;}
-  if(token)try {const r=await fetcher(result.server+"/v1/whoami",{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify({space}),signal:AbortSignal.timeout(10000),redirect:"error"});result.authentication=r.ok?"accepted":r.status===401?"invalid-or-expired":r.status===403?"permission-denied":"http-"+r.status;await r.body?.cancel();}
+  if(token)try {const r=await fetcher(result.server+"/v1/whoami",{method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json"},body:JSON.stringify({space}),signal:AbortSignal.timeout(10000),redirect:"error"});if(r.ok){const j:any=await r.json().catch(()=>null);result.authentication=j?.ok===true&&typeof j.result?.name==="string"?"accepted":"invalid-response";}else{result.authentication=r.status===401?"invalid-or-expired":r.status===403?"permission-denied":"http-"+r.status;await r.body?.cancel();}}
   catch(e){result.authentication=failure(e);}
   return result;
 }

@@ -197,7 +197,7 @@ export async function search(sp: any, peer: Peer, a: any) {
 export async function list(sp: any, peer: Peer, a: any) {
   const can = reader(sp, peer), f = scopeFilter({ ...a, include_superseded: a.include_superseded ?? a.since != null });
   const lim = Math.min(Math.max(Number(a.limit ?? 100) || 100, 1), 1000);
-  const rows = (sp.sql.exec(`select * from kb_entries where ${f.sql} order by seq, id limit ?`, ...f.args, lim + 1).toArray() as any[]);
+  const rows = (sp.sql.exec(`select * from kb_entries where ${f.sql} order by ${a.recent ? "seq desc, id" : "seq, id"} limit ?`, ...f.args, lim + 1).toArray() as any[]);
   const more = rows.length > lim, page = rows.slice(0, lim).filter(r => can(r.path));
   const removed = a.since != null ? (sp.sql.exec("select id, path, seq from kb_gone where seq>? order by seq limit 1000", Number(a.since) || 0).toArray() as any[]).filter(r => can(r.path)).map(r => ({ id: r.id, path: r.path, version: r.seq })) : undefined;
   const v = kbVersion(sp), since = Number(a.since ?? 0) || 0;
