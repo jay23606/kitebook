@@ -19,34 +19,36 @@ beforeAll(() => {
   const cx = "019a0000-0000-7000-8000-00000000c0de";
   files.codex = put(join(H, ".codex/sessions/2026/10/20", `rollout-2026-10-20T10-00-00-${cx}.jsonl`), jl(
     { timestamp: "2026-10-20T10:00:00Z", type: "session_meta", payload: { id: cx, cwd: REPO, source: "cli" } },
+    { timestamp: "2026-10-20T10:00:00Z", type: "turn_context", payload: { model: "gpt-fixture" } },
     { timestamp: "2026-10-20T10:00:01Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>cwd</environment_context>" }] } },
     { timestamp: "2026-10-20T10:00:02Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "fix the flaky retry test in uploads" }] } },
     { timestamp: "2026-10-20T10:00:03Z", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `Done. I used token ${SECRET} from your env.` }] } }));
   put(join(H, ".codex/session_index.jsonl"), jl({ id: cx, thread_name: "Uploads retry fix" }));
   files.claude = put(join(H, ".claude/projects", SS.claudeDirName(REPO), "c1a0de00-1111-4222-8333-444455556666.jsonl"), jl(
     { type: "user", sessionId: "c1a0de00-1111-4222-8333-444455556666", cwd: REPO, timestamp: "2026-10-21T09:00:00Z", message: { role: "user", content: "add dark mode to the settings page" } },
-    { type: "assistant", sessionId: "c1a0de00-1111-4222-8333-444455556666", cwd: REPO, message: { role: "assistant", content: [{ type: "text", text: `Set ANTHROPIC_API_KEY=${KEY} first.` }, { type: "tool_use", name: "Edit" }] } },
+    { type: "assistant", sessionId: "c1a0de00-1111-4222-8333-444455556666", cwd: REPO, message: { role: "assistant", model: "claude-fixture", content: [{ type: "text", text: `Set ANTHROPIC_API_KEY=${KEY} first.` }, { type: "tool_use", name: "Edit" }] } },
     { type: "summary", summary: "Dark mode for settings" }));
   files.pi = put(join(H, ".pi/agent/sessions", "--work-acme-app--", "2026-10-22T08-00-00_p1.jsonl"), jl(
     { type: "session", version: 3, id: "pi-session-1", cwd: REPO, timestamp: "2026-10-22T08:00:00Z" },
+    { type: "model_change", provider: "test", modelId: "pi-fixture", timestamp: "2026-10-22T08:00:01Z" },
     { type: "message", id: "m1", message: { role: "user", content: [{ type: "text", text: "explain the billing webhook" }] } },
     { type: "message", id: "m2", message: { role: "assistant", content: [{ type: "text", text: "The webhook verifies a signature, then queues the invoice." }] } },
     { type: "session_info", name: "Billing webhook" }));
   const gh = createHash("sha256").update(REPO).digest("hex");
   files.gemini = put(join(H, ".gemini/tmp", gh, "chats", "session-2026-10-19.json"), JSON.stringify({ sessionId: "gem-1", projectHash: gh, lastUpdated: new Date(OLD).toISOString(),
-    messages: [{ type: "user", content: "rename the cli flags", timestamp: "2026-10-19T00:00:00Z" }, { type: "gemini", content: "Renamed --out to --output." }] }));
+    messages: [{ type: "user", content: "rename the cli flags", timestamp: "2026-10-19T00:00:00Z" }, { type: "gemini", model: "gemini-fixture", content: "Renamed --out to --output." }] }));
   files.copilot = put(join(H, ".copilot/session-state/cop-1/events.jsonl"), jl(
-    { type: "session.start", data: { sessionId: "cop-1", context: { cwd: REPO } } }, { type: "user.message", data: { content: "write a changelog entry" } }, { type: "assistant.message", data: { content: "Added to CHANGELOG.md" } }));
+    { type: "session.start", data: { sessionId: "cop-1", context: { cwd: REPO } } }, { type: "user.message", data: { content: "write a changelog entry" } }, { type: "assistant.message", data: { model: "copilot-fixture", content: "Added to CHANGELOG.md" } }));
   mkdirSync(join(H, ".local/share/opencode"), { recursive: true });
   const db = new Database(join(H, ".local/share/opencode/opencode.db"));
   db.run("create table session(id text, project_id text, directory text, title text, time_created integer, time_updated integer)");
   db.run("create table message(id text, session_id text, time_created integer, data text)"); db.run("create table part(id text, message_id text, session_id text, data text)");
   db.run("insert into session values('oc-1','p',?, 'Migrate to sqlite', ?, ?)", [REPO, OLD, OLD]);
   db.run("insert into message values('m1','oc-1',?,?)", [OLD, JSON.stringify({ role: "user" })]); db.run("insert into part values('p1','m1','oc-1',?)", [JSON.stringify({ type: "text", text: "migrate the storage layer to sqlite" })]);
-  db.run("insert into message values('m2','oc-1',?,?)", [OLD + 1, JSON.stringify({ role: "assistant" })]); db.run("insert into part values('p2','m2','oc-1',?)", [JSON.stringify({ type: "text", text: "Migrated." })]);
+  db.run("insert into message values('m2','oc-1',?,?)", [OLD + 1, JSON.stringify({ role: "assistant", modelID: "oc-fixture", providerID: "test" })]); db.run("insert into part values('p2','m2','oc-1',?)", [JSON.stringify({ type: "text", text: "Migrated." })]);
   db.close(); utimesSync(join(H, ".local/share/opencode/opencode.db"), OLD / 1000, OLD / 1000);
   put(join(H, ".cursor/chats/abc/cur-1/meta.json"), JSON.stringify({ agentId: "cur-1", name: "Refactor auth", cwd: REPO }));
-  files.cursor = put(join(H, ".cursor/projects/acme/agent-transcripts/cur-1/cur-1.jsonl"), jl({ role: "user", message: { content: [{ type: "text", text: "refactor the auth middleware" }] } }, { role: "assistant", message: { content: [{ type: "text", text: "Split it in two." }] } }));
+  files.cursor = put(join(H, ".cursor/projects/acme/agent-transcripts/cur-1/cur-1.jsonl"), jl({ role: "user", message: { content: [{ type: "text", text: "refactor the auth middleware" }] } }, { role: "assistant", model: "cursor-fixture", message: { content: [{ type: "text", text: "Split it in two." }] } }));
 });
 
 test("every agent's store is listed with id, title and cwd", () => {
@@ -131,4 +133,31 @@ test("memory: a .zst rollout is decompressed only when small (its head read from
   const l = SS.listAll({ ...o, agent: "codex" }), s = l.find(m => m.id === small)!, b = l.find(m => m.id === big)!;
   expect(s.cwd).toBe(REPO); expect(b.cwd).toBe(""); // the small one's session_meta is its FIRST line (past the 64 KB tail it'd be lost)
   expect((await SS.get({ agent: "codex", id: small, last: 1 }, o)).messages[0].text).toContain("turn 1999"); expect((await SS.get({ agent: "codex", id: big }, o)).total).toBe(0);
+});
+
+
+test("status returns bounded model evidence for every adapter, never messages or an inferred busy flag", async () => {
+  const expected: Record<string,string> = { codex: "gpt-fixture", claude: "claude-fixture", pi: "test/pi-fixture", gemini: "gemini-fixture", copilot: "copilot-fixture", opencode: "test/oc-fixture", cursor: "cursor-fixture" };
+  const before = Object.fromEntries(Object.values(files).map(f => [f, readFileSync(f, "utf8")]));
+  const index = readFileSync(O.index as string, "utf8");
+  for (const m of SS.listAll(O)) {
+    const s = await SS.status({ agent: m.agent, id: m.id }, O);
+    expect(s.model?.id).toBe(expected[m.agent]); expect(s.model?.verified_current).toBe(false); expect(s.busy).toBe(null);
+    expect(s).not.toHaveProperty("messages"); expect(s).not.toHaveProperty("snippet"); expect(s).not.toHaveProperty("title");
+    expect(JSON.stringify(s)).not.toContain(SECRET); expect(JSON.stringify(s)).not.toContain(KEY);
+    expect(JSON.stringify(s)).not.toContain(m.file);
+  }
+  expect(readFileSync(O.index as string, "utf8")).toBe(index);
+  for (const [f, bytes] of Object.entries(before)) expect(readFileSync(f, "utf8")).toBe(bytes);
+  await expect(SS.status({ agent: "pi", id: "missing" }, O)).rejects.toThrow(/no pi session/);
+});
+
+test("missing or secret-shaped model metadata remains unknown and session text is never parsed as model authority", async () => {
+  const h = mkdtempSync(join(tmpdir(), "kb-status-")), f = join(h, ".pi/agent/sessions/x/a_x.jsonl"), o = { home: h, env: {}, index: false as const };
+  put(f, jl({ type: "session", id: "x", cwd: "/x" }, { type: "message", message: { role: "assistant", content: "model is gpt-invented" } }));
+  expect((await SS.status({ agent: "pi", id: "x" }, o)).model).toBe(null);
+  put(f, readFileSync(f, "utf8") + jl({ type: "model_change", modelId: SECRET }));
+  expect((await SS.status({ agent: "pi", id: "x" }, o)).model).toBe(null);
+  put(f, readFileSync(f, "utf8") + jl({ type: "model_change", modelId: "old-selection" }) + "x".repeat(SS.LIMITS.tailBytes + 1));
+  expect((await SS.status({ agent: "pi", id: "x" }, o)).model).toBe(null);
 });

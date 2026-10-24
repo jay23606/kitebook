@@ -32,13 +32,13 @@ export function needSessions(sp: Space, peer: Peer, want: "read" | "write") {
     throw new RelayError(403, `${peer.name} may not ${want === "read" ? "read" : "start or continue"} the owner's agent sessions: the owner has to allow it in Settings -> Assistants -> ${peer.name} -> "Agent sessions" (${want === "read" ? "Search and read" : "Search, read and send"}). Tell the owner; it asks them to confirm it's them.`);
   return m;
 }
-const runnerFor = async (sp: Space, to: any) => {
+const runnerFor = async (sp: Space, to: any, sessions = true) => {
   let name = to == null || to === "" ? null : String(to);
   if (!name) { const rs = sp.sql.exec("select name from members where kind='runner' and revoked=0 order by name").toArray() as any[];
     if (rs.length !== 1) throw new RelayError(400, rs.length ? `to: which computer? runners here: ${rs.map(r => r.name).join(", ")}` : "no runner (computer) is connected to this workspace yet"); name = rs[0].name as string; }
   const tgt = sp.sql.exec("select * from members where name=? and revoked=0", name).toArray()[0] as any;
   if (!tgt) throw new RelayError(404, `no connected computer named ${name}`); if (tgt.kind !== "runner") throw new RelayError(400, `${name} isn't a runner (a computer with Kitebook)`);
-  const ad = await sp.runnerAd(tgt.name); if (ad && !ad.sessions) throw new RelayError(400, `${name} runs an older runner without the session tools: update it (kitebook update)`);
+  const ad = await sp.runnerAd(tgt.name); if (sessions && ad && !ad.sessions) throw new RelayError(400, `${name} runs an older runner without the session tools: update it (kitebook update)`);
   return tgt;
 };
 const audit = (sp: Space, peer: Peer, kind: "read" | "write", op: string, d: any) => {
@@ -50,11 +50,12 @@ export function sessionOps(this: Space): Record<string, Op> {
   // ask the runner, wait (in memory) for its answer
   const rpc = async (peer: Peer, op: string, args: any) => {
     for (const [k, p] of pending) if (Date.now() - p.at > KEEP_MS) pending.delete(k);
-    const tgt = await runnerFor(this, args.to), id = rid("sx");
+    const tgt = await runnerFor(this, args.to, op !== "models"), id = rid("sx");
+    if ([...pending.values()].filter(p => p.space === this.spaceId).length >= 32) throw new RelayError(429, "too many pending discovery/session requests; retry later");
     pending.set(id, { space: this.spaceId, runner: tgt.name, from: peer.name, op, args, at: Date.now(), res: null });
     this.emit("sessions.requested", peer, { data: { id, op, target: tgt.name } }); // only that runner (and the asker) see it: Space.visible
     const end = Date.now() + WAIT_MAX * 1000;
-    try { for (;;) { const p = pending.get(id); if (p?.res) { if (!p.res.ok) throw new RelayError(p.res.error?.startsWith("refused") ? 403 : 400, String(p.res.error)); return { computer: tgt.name, ...p.res.result }; }
+    try { for (;;) { const p = pending.get(id); if (p?.res) { if (!p.res.ok) throw new RelayError(p.res.error?.startsWith("refused") ? 403 : 400, String(p.res.error)); if (op === "models") this.need(peer, "read"); else needSessions(this, peer, "read"); return { computer: tgt.name, ...p.res.result }; }
         const left = (end - Date.now()) / 1000; if (left <= 0.05) throw new RelayError(504, `${tgt.name} didn't answer within ${WAIT_MAX} s (it may be offline or asleep); try again later`);
         await this.wait(Math.min(left, 5)); } }
     finally { pending.delete(id); }
@@ -72,6 +73,23 @@ export function sessionOps(this: Space): Record<string, Op> {
     SESSION_ARGS.set(args, sess); return args;
   };
   return {
+    agent_models: async (peer, a) => {
+      this.need(peer, "read"); const tgt = await runnerFor(this, a.runner ?? a.to, false), ad = await this.runnerAd(tgt.name), agent = a.agent == null ? null : String(a.agent);
+      if (agent && !(ad?.agents ?? []).includes(agent)) throw new RelayError(400, `agent ${agent} is not advertised on ${tgt.name}`);
+      const names = agent ? [agent] : ad?.agents ?? [], catalogs = names.map((n: string) => ad?.model_catalogs?.[n] ?? { agent: n, source: "legacy_unverified", models: (ad?.models?.[n] ?? []).map((id: string) => ({ id, source: "legacy_unverified" })), authoritative: false, checked_at: null, attempted_at: null, expires_at: null, stale: true, availability: "unknown" });
+      const cached = () => ({ computer: tgt.name, online: this.presence(tgt).online, catalogs: catalogs.map((c: any) => ({ ...c, stale: c.stale || !c.expires_at || !(Date.parse(c.expires_at) > Date.now()) })), note: "A catalog is not proof of account access or of a coding session's current model." });
+      if (a.refresh !== true) return { ...cached(), refresh: "not_requested" };
+      if (!ad?.model_discovery) return { ...cached(), refresh: "unsupported", next: "Update this computer's Kitebook runner to enable read-only model refresh." };
+      if (!this.presence(tgt).online) return { ...cached(), refresh: "offline" };
+      try { const result = await rpc(peer, "models", { to: tgt.name, agent }); return { ...result, refresh: "completed" }; }
+      catch (e: any) { this.need(peer, "read"); return { ...cached(), refresh: "failed", error: redact(String(e.message)).slice(0,300) }; }
+    },
+    session_status: async (peer, a) => {
+      needSessions(this, peer, "read"); if (!SESSION_AGENTS.includes(String(a.agent))) throw new RelayError(400, `agent: one of ${SESSION_AGENTS.join(", ")}`);
+      if (typeof a.session_id !== "string" || !a.session_id || a.session_id.length > 200) throw new RelayError(400, "session_id: native coding-session identifier required");
+      audit(this, peer, "read", "session_status", { agent: a.agent, id: a.session_id });
+      return rpc(peer, "status", { agent: a.agent, id: a.session_id, to: a.runner ?? a.to });
+    },
     sessions_search: async (peer, a) => {
       needSessions(this, peer, "read");
       const args = { query: str(a.query, 500) ?? "", agent: a.agent ?? null, cwd: str(a.cwd, 1000), since: a.since ?? null, limit: clamp(a.limit, 1, 50, 10), to: a.to };

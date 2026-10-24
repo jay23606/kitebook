@@ -4,12 +4,18 @@ import { ACTIVE, now, redact, SPEC_FIELDS, codeNotes, MODES } from "./util.ts";
 import { sessionsLevel } from "./sessions.ts";
 import type { Space, Op } from "../space.ts";
 import { briefView } from "./brief.ts";
+import { mcpStatus } from "../mcp.ts";
 import { SERVER_BUILD } from "../build.ts";
 import { runnerHealth } from "./health.ts";
 import { ago } from "../health.ts";
 
 export function peerOps(this: Space): Record<string, Op> {
   const ops: Record<string, Op> = {
+    // WebSocket ops have one workspace; HTTP/MCP use the front door's full authenticated identity.
+    mcp_status: async (peer, a) => { this.need(peer, "read"); return mcpStatus(a, async (op, args) => {
+      if (op === "whoami") return { ok: true, result: { ...peer, spaces: [{ space: this.spaceId }] } };
+      return { ok: true, result: await this.impl[op](peer, args) };
+    }); },
     peers: async (peer) => {
       this.need(peer, "read");
       const rows = this.sql.exec("select * from members where revoked=0").toArray() as any[];
@@ -30,7 +36,7 @@ export function peerOps(this: Space): Record<string, Op> {
         if (r.kind !== "runner") { peers.push({ name: r.name, kind: r.kind, ...pr }); continue; }
         const ad = await this.runnerAd(r.name);
         runners.push({ name: r.name, ...pr, advertised: !!ad, hours: ad?.hours ?? null, ...(ad ? {
-          agents: ad.agents ?? [], default_agent: ad.default_agent ?? null, models: ad.models ?? {}, max_parallel: ad.max_parallel ?? null, prefs: ad.prefs ?? {},
+          agents: ad.agents ?? [], default_agent: ad.default_agent ?? null, models: ad.models ?? {}, model_catalogs: ad.model_catalogs ?? null, model_discovery: ad.model_discovery ?? null, max_parallel: ad.max_parallel ?? null, prefs: ad.prefs ?? {},
           projects: Object.fromEntries(Object.entries<any>(ad.projects ?? {}).map(([k, v]) => [k, { agent: v.agent, verify: v.verify ?? [], push: v.push ?? "never", remote: v.remote ?? null, ...(v.mirror ? { mirror: true } : {}) }])),
           machine_tasks: !!ad.machine_tasks, approve: ad.approve ?? null, access: ad.access ?? null, protect: ad.protect ?? null, paused: !!ad.paused,
           spec: ad.spec ?? null, cancel: !!ad.cancel, build: ad.build ?? null, updated: ad.updated ?? null } : {}) }); // build: which Kitebook code that runner runs (client/runner.ts)
@@ -38,12 +44,12 @@ export function peerOps(this: Space): Record<string, Op> {
       const pz = this.pauseState();
       // the owner's standing instructions come first, so a dispatcher reads them before anything else (src/brief.ts)
       const b = peer.kind === "runner" ? null : await briefView(this, peer);
-      return { ...(b ? { brief: { ...b, note: b.text ? "The owner's standing instructions for you: follow them (brief_propose suggests a change)." : "No instructions from the owner yet." } } : {}), space: this.spaceId, generated: now(), server: SERVER_BUILD, runners, peers, // server: which Kitebook code this server runs (src/build.ts)
+      return { ...(b ? { brief: { ...b, note: b.text ? "The owner's standing instructions for you: follow them (brief_propose suggests a change)." : "No instructions from the owner yet." } } : {}), space: this.spaceId, generated: now(), server: SERVER_BUILD, runners, peers, mcp_update: { check: "mcp_status", when: ["startup", "sandbox restart", "next turn after update"], apply: "Refresh tools/list and reinitialize or reconnect in your host; persist revisions only after applying them" }, model_note: "Model catalogs describe discovery, not account access. Runner presence covers its tasks and agent reports; it is not a list of every open conversation.", // server: which Kitebook code this server runs (src/build.ts)
         task_spec: { version: 2, fields: SPEC_FIELDS, modes: MODES, budget: ["minutes", "max_files_changed"], promote: "task_promote", note: "acceptance commands must be in the project's verify list" },
         git: { repo: "task_create repo = a project's remote URL or its name", base: "branch, tag or commit to start from (default: the checkout's HEAD)", push: "the task branch only, never main", result: ["branch", "base", "commit", "diff_stat", "pushed", "compare_url", "pr_url"] },
         retention_days: this.retentionDays(),
         // the owner's local agent sessions (src/space/sessions.ts): what this app may do with them, in words
-        ...(peer.kind === "runner" ? {} : { sessions: ((l: string) => ({ allowed: l, tools: l === "write" ? ["sessions_search", "session_get", "session_create", "session_send"] : l === "read" ? ["sessions_search", "session_get"] : [],
+        ...(peer.kind === "runner" ? {} : { sessions: ((l: string) => ({ allowed: l, tools: l === "write" ? ["sessions_search", "session_get", "session_status", "session_create", "session_send"] : l === "read" ? ["sessions_search", "session_get", "session_status"] : [],
           note: l === "off" ? "You can't see the owner's agent sessions; the owner can allow it in Settings -> Assistants -> Agent sessions" : l === "read" ? "You may search and read the owner's agent sessions (read-only)" : "You may search, read, start and continue the owner's agent sessions (their own sessions only as a copy)" }))(sessionsLevel(this, peer.name)) }),
         // something broke on the owner's side (a 500 answers {ok:false, error, request_id}): where to look (src/devlog.ts)
         // experimental: what the owner's Experimental switch turned on (relay_logs, local CI); debug: its older name for the logs part

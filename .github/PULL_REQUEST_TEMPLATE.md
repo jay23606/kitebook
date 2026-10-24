@@ -7,7 +7,7 @@
 ## Verification
 <!-- List commands you actually ran and their results, including failures and skips. For docs-only changes, validate affected links/forms and explain why runtime tests were not run. -->
 - [ ] Code changes: `bun run typecheck` and `npm run test:fast`
-- [ ] Runner/server changes: `SKIP_NTFY=1 ./smoke.sh` ends in `ALL PASSED` (count: ___)
+- [ ] Runner/server changes: affected real-runtime smoke sections and prerequisites pass (sections/count: ___); full smoke for broad auth/storage/task/update changes or release promotion
 - [ ] Behavior changes have meaningful regression coverage; extend existing smoke checks within the check budget or use `bun test` for pure logic
 
 ## AI tools

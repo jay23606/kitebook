@@ -34,7 +34,7 @@ export default defineConfig({
 			EVENTS_STREAM_MAX_MS: bindings.text(EVENTS_TEST ? "6000" : "300000"),
 			EVENTS_MAX_STREAMS: bindings.text(EVENTS_TEST ? "3" : "4"),
 			// Durable webhook outbox: first retry after OUTBOX_BASE_MS, doubling (jittered, capped 10 min), dropped after OUTBOX_MAX_ATTEMPTS tries.
-			OUTBOX_BASE_MS: bindings.text(EVENTS_TEST ? "400" : "2000"),
+			OUTBOX_BASE_MS: bindings.text(EVENTS_TEST ? "1000" : "2000"),
 			OUTBOX_MAX_ATTEMPTS: bindings.text("8"),
 			// Hosted mode: a public Kitebook strangers sign up on (KITEBOOK_HOSTED=1 at deploy). It opens dynamic client registration to every
 			// client (unless KITEBOOK_OAUTH_DCR=0) and sets the hosted default quotas below. A self-hosted Kitebook leaves it off.

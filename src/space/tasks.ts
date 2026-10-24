@@ -377,7 +377,7 @@ export class SpaceTasks extends SpaceFiles {
     if (a.agent != null && agents.length && !agents.includes(a.agent)) throw new RelayError(400, `agent "${a.agent}" is not available on ${target}; agents: ${agents.join(", ")}`);
     const agent = a.agent ?? ad.projects?.[a.project]?.agent ?? ad.default_agent;
     const models: string[] = Array.isArray(ad.models?.[agent]) ? ad.models[agent] : [];
-    if (a.model != null && models.length && !modelOk(models, String(a.model))) throw new RelayError(400, `model "${a.model}" is not available for ${agent} on ${target}; models: ${models.join(", ")}`);
+    if (a.model != null && ad.model_catalogs?.[agent]?.authoritative === true && !modelOk(models, String(a.model))) throw new RelayError(400, `model "${a.model}" is not available for ${agent} on ${target}; models: ${models.join(", ")}`);
     const pf = ad.prefs ?? {}; // the machine owner's allow/deny rules (the runner enforces them too)
     if (a.agent != null && !pickAllowed(pf, agent, a.model ?? null)) throw new RelayError(400, `${agent}${a.model ? "/" + a.model : ""} is not allowed by ${target}'s owner; allowed: ${(pf.allow ?? []).join(", ") || "anything"}${pf.deny?.length ? ` except ${pf.deny.join(", ")}` : ""}`);
   }
@@ -397,7 +397,7 @@ export class SpaceTasks extends SpaceFiles {
   // owner: also phone_on (the exact "turn on phone approvals" command, which names the runner.json path), for the /start Status card only
   async runnerCaps(name: string, owner = false) {
     const sha = this.blobAt(`shared/runners/${name}.json`); if (!sha) return null;
-    try { const ad = JSON.parse(await this.content(sha)); return { agents: ad.agents, default_agent: ad.default_agent, models: ad.models, prefs: ad.prefs ?? {}, max_parallel: ad.max_parallel, paused: ad.paused, ...(ad.approval ? { approval: ad.approval } : {}),
+    try { const ad = JSON.parse(await this.content(sha)); return { agents: ad.agents, default_agent: ad.default_agent, models: ad.models, model_catalogs: ad.model_catalogs ?? null, prefs: ad.prefs ?? {}, max_parallel: ad.max_parallel, paused: ad.paused, ...(ad.approval ? { approval: ad.approval } : {}),
       approve_ways: Array.isArray(ad.approve_ways) ? ad.approve_ways : null, ...(owner && typeof ad.phone_on === "string" ? { phone_on: ad.phone_on } : {}), updated: ad.updated }; } catch { return null; }
   }
   // git-first: a task names code by git (repo = a git remote URL or the runner's project name, base = branch/tag/commit),
@@ -433,7 +433,7 @@ export class SpaceTasks extends SpaceFiles {
     const agent = a.agent ?? (a.kind ? ad?.prefs?.byKind?.[a.kind]?.agent : null) ?? (p ? ad?.project_agents?.[p] ?? ad?.projects?.[p]?.agent : null) ?? ad?.prefs?.defaultAgent ?? ad?.default_agent ?? null;
     let code: any = null; try { const r = this.sql.exec("select data from code_state where runner=?", tgt.name).toArray()[0] as any; code = r ? JSON.parse(r.data) : null; } catch {}
     return { agent, online: pr.online, ...preflight({ runner: tgt.name, online: pr.online, last_seen: pr.last_seen, advertised: !!ad, agent, model: a.model ?? null, project: p,
-      agents: ad?.agents ?? null, agents_detail: Array.isArray(ad?.agents_detail) ? ad.agents_detail : null, models: ad?.models ?? null, projects: ad?.projects ?? null, code }) };
+      agents: ad?.agents ?? null, agents_detail: Array.isArray(ad?.agents_detail) ? ad.agents_detail : null, models: ad?.models ?? null, model_catalogs: ad?.model_catalogs ?? null, projects: ad?.projects ?? null, code }) };
   }
   async runnerAd(name: string) { const sha = this.blobAt(`shared/runners/${name}.json`); if (!sha) return null; try { return JSON.parse(await this.content(sha)); } catch { return null; } }
   // A spec is a contract the runner must be able to keep, so refuse at create what its advertisement already rules out.

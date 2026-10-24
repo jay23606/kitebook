@@ -38,7 +38,7 @@ test("the owner's audit line says the change in plain words", () => {
 test("tools/list: the session tools only once the owner allowed them, never for a runner", () => {
   const names = (o: any) => toolsFor("assistant", o).map(t => t.name);
   expect(names({}).filter(n => n.startsWith("session"))).toEqual([]);
-  expect(names({ sessions: "read" }).filter(n => n.startsWith("session")).sort()).toEqual(["session_get", "sessions_search"]);
+  expect(names({ sessions: "read" }).filter(n => n.startsWith("session")).sort()).toEqual(["session_get", "session_status", "sessions_search"]);
   expect(names({ sessions: "write" }).filter(n => n.startsWith("session")).sort()).toEqual([...SESSION_TOOLS.write].sort());
   expect(toolsFor("runner").map(t => t.name).filter(n => SESSION_TOOLS.write.includes(n))).toEqual([]);
   for (const n of SESSION_TOOLS.write) expect(OPS[n].desc.length).toBeGreaterThan(80);
@@ -123,4 +123,15 @@ test("a live fork that falls back to the CLI carries the summary just before the
   expect(RS.withPreamble("You are working…\n\nTask: fix it\n\ndo x", "SEED")).toBe("You are working…\n\nSEED\n\nTask: fix it\n\ndo x");
   expect(RS.withPreamble("no task line", "SEED $& $1")).toBe("SEED $& $1\n\nno task line");
   expect(await RS.forkPreamble("pi", "pi1")).toContain("hello from the owner");
+});
+
+test("runner withholds metadata if the signed session grant ends before delivery", async () => {
+  const C = await import("./runner-ctx.ts"), RS = await import("./runner-sessions.ts"), prior = C.cfg, allowed = RS.hooks.allowed, fetch0 = globalThis.fetch;
+  let checks = 0, reply: any;
+  try { C.setCfg({ url: "http://session-fixture.invalid", space: "main" }); RS.hooks.allowed = async () => ({ level: ++checks === 1 ? "read" : "off" });
+    globalThis.fetch = (async (_url: any, init: any) => { const a = JSON.parse(init.body);
+      if (String(_url).endsWith("/sessions_take")) return Response.json({ok:true,result:{op:"status",from:"hark",args:{agent:"pi",id:"pi1"}}});
+      reply = a; return Response.json({ok:true,result:{ok:true}}); }) as typeof fetch;
+    await RS.onRequest("fixture-grant-ended"); expect(checks).toBe(2); expect(reply.ok).toBe(false); expect(reply.error).toMatch(/session access ended/); expect(reply.result).toBeUndefined();
+  } finally { globalThis.fetch = fetch0; C.setCfg(prior); RS.hooks.allowed = allowed; }
 });

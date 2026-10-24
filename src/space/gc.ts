@@ -107,16 +107,29 @@ export class SpaceGc extends SpaceCore {
   gcDue(): number { // when the alarm next has GC work: a dirty mark (repos trim) or the first marked/pending blob's grace end
     const g = this.gcGraceMs(), d = this.sql.exec("select v from meta where k='gc_dirty'").toArray()[0]?.v;
     const m = this.sql.exec("select min(marked) m from blob_gc").one().m as number | null, p = this.sql.exec("select min(at) m from blob_put").one().m as number | null;
-    return Math.min(d != null ? Number(d) + 60_000 : Infinity, m != null ? m + g : Infinity, p != null ? p + g : Infinity);
+    const failures = Number(this.sql.exec("select v from meta where k='gc_failures'").toArray()[0]?.v ?? 0);
+    if (failures >= 8) return Infinity; // storage needs operator attention; do not wake/bill forever
+    const retry = Number(this.sql.exec("select v from meta where k='gc_retry_at'").toArray()[0]?.v ?? 0);
+    return Math.max(retry, Math.min(d != null ? Number(d) + 60_000 : Infinity, m != null ? m + g : Infinity, p != null ? p + g : Infinity));
   }
   gcStats() {
     const k = (x: string) => Number(this.sql.exec("select v from meta where k=?", x).toArray()[0]?.v ?? 0);
     const p = this.sql.exec("select count(*) n, coalesce(sum(b.size),0) s from blob_gc g join blobs b on b.sha=g.sha").one() as any;
     return { freed_bytes: k("gc_freed_bytes"), freed_blobs: k("gc_freed_blobs"), marked_blobs: p.n as number, marked_bytes: p.s as number,
       pending_uploads: this.sql.exec("select count(*) n from blob_put").one().n as number, grace_sec: this.gcGraceMs() / 1000, repos_history: this.reposHistory(),
+      retry_failures: k("gc_failures"), retry_paused: k("gc_failures") >= 8, retry_at: k("gc_retry_at") && k("gc_failures") < 8 ? new Date(k("gc_retry_at")).toISOString() : null,
       last_run: k("gc_last") ? new Date(k("gc_last")).toISOString() : null };
   }
-  async gc(graceMs = this.gcGraceMs()) {
+  gcPending?: Promise<any>;
+  gc(graceMs = this.gcGraceMs(), retry = false): Promise<any> {
+    return this.gcPending ??= this.collectBlobs(graceMs, retry).finally(() => { this.gcPending = undefined; });
+  }
+  async collectBlobs(graceMs: number, retry: boolean) {
+    if (retry) this.sql.exec("delete from meta where k in ('gc_failures','gc_retry_at')");
+    const failures = Number(this.sql.exec("select v from meta where k='gc_failures'").toArray()[0]?.v ?? 0);
+    const retryAt = Number(this.sql.exec("select v from meta where k='gc_retry_at'").toArray()[0]?.v ?? 0);
+    if (failures >= 8 || retryAt > Date.now()) return { deferred: failures >= 8 ? "storage failures: retry paused; operator gc resumes" : "storage retry cooldown", marked: 0, swept: 0, freed_bytes: 0, external_deleted: 0 };
+
     if (this.exporting) { await this.armAlarm(Date.now() + 60_000); return { deferred: "export in progress", marked: 0, swept: 0, freed_bytes: 0, external_deleted: 0 }; }
     const t = Date.now(), due = t - graceMs, ext = new Set<string>(), orphan = new Map<string, number>(); let marked = 0, swept = 0, freed = 0;
     this.ctx.storage.transactionSync(() => { // mark + row sweep in one sync step: no commit interleaves between "unreferenced" and delete
@@ -133,7 +146,7 @@ export class SpaceGc extends SpaceCore {
       this.sql.exec("delete from blob_put where sha in (select sha from blobs)");
       this.sql.exec("delete from meta where k='gc_dirty'");
     });
-    let deleted = 0;
+    let deleted = 0, failed = false;
     const held = (sha: string) => this.putting.has(sha) || this.sql.exec("select 1 from blobs where sha=? union all select 1 from blob_put where sha=?", sha, sha).toArray().length > 0;
     for (const sha of ext) {
       if (!this.store || held(sha) || this.sweeping.has(sha)) continue;
@@ -142,9 +155,11 @@ export class SpaceGc extends SpaceCore {
         await this.store.unref(sha, this.refKey);
         if (held(sha)) { await this.store.ref(sha, this.refKey); continue; } // re-used while we awaited: keep it
         if ((await this.store.refs(sha)) === 0) { await this.store.del(sha); deleted++; if (orphan.has(sha)) { freed += orphan.get(sha)!; swept++; } } // another space still marks it: theirs now
-      } catch (e) { console.error("blob gc", sha, e); this.sql.exec("insert or replace into blob_put values(?,0,?)", sha, orphan.get(sha) ?? 0); } // retried next run
+      } catch (e) { failed = true; console.error("blob gc", sha, e); this.sql.exec("insert or replace into blob_put values(?,?,?)", sha, Date.now() - this.gcGraceMs() + 60_000, orphan.get(sha) ?? 0); } // persist a retry deadline >= 1 minute away, even with zero grace; timestamp + grace = deadline
       finally { this.sweeping.delete(sha); done(); }
     }
+    if (failed) this.sql.exec("insert or replace into meta values('gc_failures',?),('gc_retry_at',?)", String(failures + 1), String(Date.now() + Math.min(3600000, 60000 * 2 ** failures)));
+    else this.sql.exec("delete from meta where k in ('gc_failures','gc_retry_at')");
     const m = (k: string) => Number(this.sql.exec("select v from meta where k=?", k).toArray()[0]?.v ?? 0); // bytes freed: rows swept + orphan uploads deleted
     this.sql.exec("insert or replace into meta values('gc_freed_bytes',?),('gc_freed_blobs',?),('gc_last',?)", String(m("gc_freed_bytes") + freed), String(m("gc_freed_blobs") + swept), String(t));
     const next = this.gcDue(); if (next < Infinity) await this.armAlarm(Math.max(next, Date.now() + 1000));

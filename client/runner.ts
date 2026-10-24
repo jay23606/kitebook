@@ -76,6 +76,7 @@
 // An agent that needs the sender ends its turn with a line [relay-question: ...]: the task parks in needs_input (no lease, slot freed,
 // FYI to ntfy if set) and the sender's task_answer resumes the same worktree, branch and session file.
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
+import { intervalMs, singleFlight, reconnectDelay, publishChanged } from "./retry.ts";
 import { normAcct } from "./account.ts";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, rmSync, symlinkSync, readdirSync } from "fs";
 import { join, dirname, resolve } from "path";
@@ -87,7 +88,7 @@ import * as S from "./sign.ts";
 import * as G from "./guard.ts";
 import * as PL from "./platform.ts";
 import { waysEnv, type Way, phoneApprove, dialogApprove, pageApprove, bound, audit, signedRuns, policyRuns, autorunRuns, policyAdvert, kbTrust, keepSignedKb, approvals, Unreachable, ChannelDown, approvalDown, approvalHealth, approve, connectAsk, repoProject, runPayload, approvedHash, rememberApproval, initApproval } from "./runner-approval.ts";
-import { PREF_KINDS, agentDef, agentNames, MODELS, probeModels, prefsView, type Pick, resolvePick, buildArgv, agentEnv, DEP_DIRS, cloneDeps, LEARN, noDeps, eventsOf, resumes, builtOf } from "./runner-agents.ts";
+import { PREF_KINDS, agentDef, agentNames, MODELS, MODEL_CATALOGS, probeModels, prefsView, type Pick, resolvePick, buildArgv, agentEnv, DEP_DIRS, cloneDeps, LEARN, noDeps, eventsOf, resumes, builtOf } from "./runner-agents.ts";
 import { ADAPTERS, parseEvent } from "./agent-adapters.ts";
 import * as AC from "./agents-connect.ts";
 import { originOf, projectForRepo, resolveBase, compareUrl, diffStat } from "./runner-git.ts";
@@ -317,11 +318,15 @@ function respondsOf(bin: string): { responds?: boolean | null; responds_why?: st
 }
 // which agent runs each project's tasks (resolvePick's order without a task pick: prefs.byProject, then the project's own agent, then the default)
 const projectAgents = () => Object.fromEntries(Object.entries<any>(cfg.projects ?? {}).map(([k, v]) => [k, cfg.prefs?.byProject?.[k]?.agent ?? (!v.auto && !v.scratch ? v.agent : undefined) ?? cfg.prefs?.defaultAgent ?? v.agent ?? cfg.defaultAgent ?? "pi"]));
-async function advertise() {
+function advertise(): Promise<void> {
+  const a = advertise as any;
+  return a.pending ??= advertiseRun().catch((e: any) => log("advertise failed", e.message)).finally(() => { delete a.pending; });
+}
+async function advertiseRun() {
   cfg.projects = discover(cfgNow() ?? JSON.parse(readFileSync(cfgPath, "utf8")));
   const remotes = Object.fromEntries(await Promise.all(Object.entries<any>(cfg.projects).map(async ([k, v]) => [k, await originOf(v)])));
   const body = { runner: me.name, projects: Object.fromEntries(Object.entries<any>(cfg.projects).map(([k, v]) => [k, { agent: v.agent, verify: v.verify ?? [], push: v.push ?? "never", mirror: !!v.mirror, auto_discovered: !!v.auto, remote: remotes[k] }])),
-    agents: agentNames(), default_agent: cfg.defaultAgent ?? "pi", agents_detail: agentsDetail(), project_agents: projectAgents(), models: MODELS, max_parallel: maxParallel(), prefs: prefsView(), approve: cfg.approve, ...approveAd(), access: cfg.access ?? "worktree", machine_tasks: true,
+    agents: agentNames(), default_agent: cfg.defaultAgent ?? "pi", agents_detail: agentsDetail(), project_agents: projectAgents(), models: MODELS, model_catalogs: MODEL_CATALOGS, model_discovery: { v: 1 }, max_parallel: maxParallel(), prefs: prefsView(), approve: cfg.approve, ...approveAd(), access: cfg.access ?? "worktree", machine_tasks: true,
     verify_autodetect: true, cancel: true, build: RUNNER_BUILD, hours: cfg.hours ?? null, // "hours": free-form availability note from runner.json (e.g. "08:00-23:00 America/Los_Angeles"), advertised as-is
     spec: { version: 2, modes: ["plan", "execute"], promote: true, acceptance: "project verify list" },
     ask: { agents: Q.askAgents(), sandbox: await Q.sandboxKind(), idle_min: Q.idleMs() / 60_000, auto_own_apps: cfg.askAuto !== false }, // quick asks (op ask)
@@ -330,8 +335,8 @@ async function advertise() {
     signing: { alg: "ed25519", auto_requires_signature: cfg.requireSignedAuto === true, trusted_signers: Object.keys(cfg.trustedKeys ?? {}), signed_kb: true, context_files: cfg.trustContextFiles === true ? "trusted" : "unsigned", trusted_kb_authors: [...kbTrust()] },
     approval: approvalDown ? { ok: false, ...approvalDown } : { ok: true }, updated: new Date().toISOString() };
   Object.assign(body, G.caps()); // protect state, so dispatchers can see what is guarded
-  const prev = (advertise as any).last; const j = JSON.stringify({ ...body, updated: 0 }); if (prev === j) return; (advertise as any).last = j;
-  await call("write", { path: `shared/runners/${me.name}.json`, content: JSON.stringify(body, null, 2), message: `runner ${me.name} capabilities` }).catch((e: any) => log("advertise failed", e.message));
+  const j = JSON.stringify({ ...body, updated: 0 });
+  await publishChanged(advertise as any, j, () => call("write", { path: `shared/runners/${me.name}.json`, content: JSON.stringify(body, null, 2), message: `runner ${me.name} capabilities` }));
 }
 on.advertise = advertise; // runner-approval.ts re-advertises when the approval channel goes down/up
 const cursorFile = join(homedir(), ".kitebook", `${me.name}.${cfg.space}.cursor`);
@@ -1289,7 +1294,7 @@ const inFlight = new Set<string>();
 // presence_report themselves): task runs (drive), quick asks while they answer, and warm quick-ask sessions kept for the next question.
 const presMeta = new Map<string, { repo: string | null; branch: string | null; agent?: string | null; model?: string | null; ask?: boolean }>(), presEvery = Math.min(600, Math.max(2, Number(cfg.presenceEvery ?? 30) || 30));
 let presTimer: any = null;
-function presenceNow() { clearTimeout(presTimer); presTimer = setTimeout(() => sendPresence().catch(() => {}), 250); }
+function presenceNow() { clearTimeout(presTimer); presTimer = setTimeout(() => presenceTick().catch(() => {}), 250); }
 async function sendPresence() {
   const sessions: any[] = [...inFlight].map(id => { const l = lives.get(id)?.info ?? {}, pm = presMeta.get(id);
     return { session: id, task: id, agent: pm?.agent ?? l.agent ?? null, model: pm?.model ?? l.model ?? null, phase: pm?.ask && l.phase === "agent_running" ? "answering" : l.phase ?? null, repo: pm?.repo ?? null, branch: pm?.branch ?? null, busy: true }; });
@@ -1306,8 +1311,9 @@ function drain() {
 }
 
 await probeModels(); await liveStatus(); Q.hooks.change = () => presenceNow(); // a warm quick-ask session started or closed: Who's working hears at once
-await advertise(); setInterval(advertise, 60000);
-sendPresence().catch(() => {}); setInterval(() => sendPresence().catch(() => {}), presEvery * 1000); // Who's working heartbeat
+const advertiseTick = singleFlight(advertise), presenceTick = singleFlight(sendPresence);
+await advertiseTick(); setInterval(() => advertiseTick().catch(e => log("advertise", e.message)), 60000);
+presenceTick().catch(() => {}); setInterval(() => presenceTick().catch(() => {}), presEvery * 1000); // Who's working heartbeat
 // kitebook open: a single-use sign-in link, plus a one-time trust secret in its #fragment so the browser that opens it is trusted here
 // by itself (client/settings-sync.ts); kitebook settings opens Settings the same way
 const SS = await import("./settings-sync.ts");
@@ -1337,15 +1343,15 @@ const restartAfterUpdate = (o: any) => { log(`installed release ${o.release ?? o
 { const UP = await import("./updater.ts"); UP.startUpdates({ cfg: () => cfgNow() ?? cfg, cfgPath, idle: () => !inFlight.size && !pids.size, log, audit, installed: restartAfterUpdate, changed: SS.poke }); }
 setInterval(() => { if (inFlight.size) checkHeld().catch(() => {}); }, 15000);
 await mirrorAll();
-setInterval(mirrorAll, (cfg.mirrorEvery ?? 30) * 1000);
+setInterval(() => mirrorAll().catch(e => log("mirror", e.message)), intervalMs(cfg.mirrorEvery, 30));
 // ---- shared knowledge base: publish allowlisted local memory (read-only), mirror the KB to a local cache (client/runner-kb.ts) ----
 initKb();
 await kbTick();
 setInterval(() => kbTick(), Math.max(1, Number(cfg.kb?.every ?? 60) || 60) * 1000);
 await outboxTick(); setInterval(outboxTick, Math.max(1, Number(cfg.kb?.every ?? 60) || 60) * 1000);
 reportCode(true).catch((e: any) => log("code status", e.message)); // git fetch every fetchEvery seconds (default 600), status every minute
-setInterval(() => reportCode(true).catch((e: any) => log("code status", e.message)), (cfg.fetchEvery ?? 600) * 1000);
-setInterval(() => reportCode(false).catch(() => {}), Math.min(60, cfg.fetchEvery ?? 600) * 1000);
+setInterval(() => reportCode(true).catch((e: any) => log("code status", e.message)), intervalMs(cfg.fetchEvery, 600));
+setInterval(() => reportCode(false).catch(() => {}), Math.min(60000, intervalMs(cfg.fetchEvery, 600)));
 
 // startup: recover from any crash, then pick up anything already waiting
 await reconcile(true);
@@ -1362,7 +1368,9 @@ if (isLaunchd() || (process.platform === "darwin" && process.ppid === 1)) setInt
   const why = `no connection to the server for ${Math.round((Date.now() - wsDownSince) / 60_000)} min while it answers /health: exiting so the service manager starts a fresh runner`;
   log(why); noteExit(why); try { G.auditAppend({ type: "service", action: "runner_restart", by: "runner", why }); } catch {} process.exit(1);
 }, 30_000);
+let reconnects = 0;
 while (true) {
+  let connectedAt = 0;
   await new Promise<void>((resolve) => {
     const ws = new WebSocket(`${wsUrl}/v1/stream?space=${cfg.space}&since=${cursor}`, { headers: { authorization: `Bearer ${cfg.token}` } } as any);
     // a socket that never opens or goes quiet (half-open after sleep, a wedged proxy) never fires onclose: without this the runner waited
@@ -1370,10 +1378,11 @@ while (true) {
     let lastPong = Date.now(), opened = false, done = false; const end = (why: string) => { if (done) return; done = true; if (wsUp) { wsUp = false; wsDownSince = Date.now(); } clearInterval(ping); clearInterval(watch); log("reconnecting:", why); try { ws.close(); } catch {} resolve(); };
     const ping = setInterval(() => { try { ws.send("ping"); } catch {} }, 30000);
     const watch = setInterval(() => { if (!opened && Date.now() - lastPong > 30_000) end("the connection didn't open in 30s"); else if (opened && Date.now() - lastPong > 95_000) end("no answer from the server for 95s"); }, 5000);
-    ws.onopen = () => { opened = true; wsUp = true; lastPong = Date.now(); log("connected as", me.name); reconcile(false).catch(e => log("reconcile failed", e.message)); outboxTick(); };
+    ws.onopen = () => { connectedAt = Date.now(); opened = true; wsUp = true; lastPong = Date.now(); log("connected as", me.name); reconcile(false).catch(e => log("reconcile failed", e.message)); outboxTick(); };
     ws.onmessage = (m) => {
       lastPong = Date.now(); if (m.data === "pong") return;
-      const ev = JSON.parse(String(m.data)).event; if (!ev) return;
+      let ev: any; try { ev = JSON.parse(String(m.data)).event; } catch { return; }
+      if (!ev || !Number.isSafeInteger(ev.seq) || ev.seq <= cursor) return;
       cursor = ev.seq; writeFileSync(cursorFile, String(cursor));
       G.onEvent(ev); // owner kill switch (space.paused / space.resumed)
       if (typeof ev.path === "string" && /^(kb|context)\//.test(ev.path)) kbPoke(); // the cache follows events (context/ packs too, and our own publishes)
@@ -1392,7 +1401,8 @@ while (true) {
     ws.onclose = (e) => { if (done) return; done = true; if (wsUp) { wsUp = false; wsDownSince = Date.now(); } clearInterval(ping); clearInterval(watch); log("disconnected:", e.code, e.reason); if (e.code === 4001) { revoked(`closed ${e.code} ${e.reason || "revoked"}`); return; } resolve(); };
     ws.onerror = () => {};
   });
-  await Bun.sleep(3000);
+  if (connectedAt && Date.now() - connectedAt >= 60000) reconnects = 0;
+  await Bun.sleep(reconnectDelay(reconnects++));
   // a socket refused at upgrade only shows as 1006: ask whoami once why. 401 = the token is dead (revoked/rotated while away), stop;
   // anything else (network, kitebook restarting) = keep reconnecting
   try { const r = await fetch(`${cfg.url}/v1/whoami`, { method: "POST", headers: H, body: "{}", signal: AbortSignal.timeout(10_000) }); if (r.status === 401) await revoked("whoami 401: token no longer valid"); } catch {}

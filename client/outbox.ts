@@ -22,7 +22,7 @@ export const inboxDir = () => join(homedir(), ".kitebook-kb", "kb-inbox");
 const norm = (u: string) => String(u ?? "").replace(/\/+$/, "");
 const mk = (d: string) => { mkdirSync(d, { recursive: true, mode: 0o700 }); return d; };
 // "the server isn't there" (queue and retry) vs "the server said no" (a real error: never queued, never retried)
-export const isOffline = (e: any) => /can't reach the server|answered HTTP (5\d\d|0)\b|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|Unable to connect|fetch failed|socket connection was closed|timed? ?out|aborted|JSON Parse error|is not valid JSON|Unexpected token/i.test(String(e?.message ?? e));
+export const isOffline = (e: any) => /can't reach the server|answered HTTP (429|5\d\d|0)\b|rate.?limit|too many requests|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|Unable to connect|fetch failed|socket connection was closed|timed? ?out|aborted|JSON Parse error|is not valid JSON|Unexpected token/i.test(String(e?.message ?? e));
 
 export type Note = { text: string; kind?: string; scope?: string; key?: string; origin?: string; title?: string };
 export function enqueue(n: Note, url: string, space?: string) {

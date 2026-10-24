@@ -14,7 +14,7 @@ export let kbBusy = false, kbSigs = new Map<number, string>(), kbAgain = false, 
 // against the persisted manifest (no kb_list; a full list only on first run / lost manifest / every kb.reconcileHours, default 6).
 // The read cache is kept fresh by kb/ + context/ events (kbPoke); the periodic tick pulls only after our own publish changed
 // something or every kb.pullEvery seconds (default 900) as a safety net, so an idle tick makes no KB calls at all.
-export let kbManFile = ""; let kbMan: KB.Manifest | null = null, kbPulledAt = 0, kbPullDue = true;
+export let kbManFile = ""; let kbMan: KB.Manifest | null = null, kbPulledAt = 0, kbPullDue = true, kbRetryAt = 0;
 export async function kbTick(pullOnly = false) {
   if (kbBusy) { kbAgain = true; return; } kbBusy = true;
   try {
@@ -37,8 +37,8 @@ export async function kbTick(pullOnly = false) {
         writeFileSync(f, JSON.stringify({ checked_at: at, last_ok: kbLastOk, errors: errs, sources: [...kbState].map(([path, v]) => ({ path, ...v })) }, null, 1)); } catch {}
     }
     const dir = kbCacheDir(), pullEvery = Math.max(1, Number(live?.pullEvery ?? 900) || 900) * 1000;
-    if (dir && (pullOnly || kbPullDue || Date.now() - kbPulledAt >= pullEvery)) try { kbPullDue = false; const r = await KB.pullCache(call, dir, join(homedir(), ".kitebook", `${me.name}.${cfg.space}.kb-cursor.json`)); kbPulledAt = Date.now(); if (r.wrote || r.removed) log(`kb cache ${dir}: ${r.wrote} updated, ${r.removed} removed (v${r.cursor})`); }
-      catch (err: any) { kbPullDue = true; if (err.message !== kbLastErr) log("kb cache error", err.message); kbLastErr = err.message; } // once per distinct error (e.g. an older Kitebook)
+    if (dir && Date.now() >= kbRetryAt && (pullOnly || kbPullDue || Date.now() - kbPulledAt >= pullEvery)) try { kbPullDue = false; const r = await KB.pullCache(call, dir, join(homedir(), ".kitebook", `${me.name}.${cfg.space}.kb-cursor.json`)); kbPulledAt = Date.now(); kbRetryAt = 0; if (r.wrote || r.removed) log(`kb cache ${dir}: ${r.wrote} updated, ${r.removed} removed (v${r.cursor})`); }
+      catch (err: any) { kbPullDue = true; kbRetryAt = Date.now() + 30000; if (err.message !== kbLastErr) log("kb cache error", err.message); kbLastErr = err.message; } // once per distinct error (e.g. an older Kitebook)
   } finally { kbBusy = false; ioStats(); if (kbAgain) { kbAgain = false; setTimeout(() => kbTick(true), 200); } }
 }
 // Offline-first KB writes from local agents (client/outbox.ts): `kitebook kb add` notes queued while the server was down, and markdown
