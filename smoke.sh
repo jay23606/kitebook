@@ -373,7 +373,7 @@ RONLY='["policy","settings_report","code_report","task_live","task_approval","ap
 mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-a.json; mc $MAC '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-r.json
 TGT=$(bun client/admin.ts peer tgt assistant 2>/dev/null); bun client/admin.ts grant tgt main read "shared/**" >/dev/null; mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t0.json
 TGTID=$(h task_create --target tgt --title "for tgt" --instructions "x" | jq -r .id); mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t1.json; h task_cancel --id $TGTID >/dev/null 2>&1 || true
-jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 35 and ($n|length) >= 25 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
+jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 40 and ($n|length) >= 25 and (["sync","sync_read","sync_ack","sync_status","sync_publish"] - $n | length)==0 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
   and (["agent_models","mcp_status","describe","presence","task_create","ask","ask_get","task_steer","task_answer","inbox","ack","task_get","kb_search","relay_update","status"]|all(. as $x|$n|index($x)))
   and ($n|index("check")|not) and ($n|index("changes")|not) and ($n|index("cancel_all")|not)' $T/tl-a.json >/dev/null \
   && jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) > 50 and ([$ro[]|select(. != "has")|select(. as $x|$n|index($x)|not)]|length==0)' $T/tl-r.json >/dev/null \

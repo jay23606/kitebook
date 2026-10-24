@@ -47,6 +47,7 @@ with sync_playwright() as pw:
     check(page.locator('#memory-edit-text').input_value() == 'Correction from another agent.', 'correction is the current retrieval result')
     page.locator('#memory-detail').get_by_role('button',name='History',exact=True).click(); page.wait_for_selector('#memory-detail pre')
     check(bool(page.locator('#memory-detail pre').inner_text()), 'version history loads')
+    page.evaluate("() => {document.activeElement.blur();scrollTo(0,0)}")
     page.screenshot(path=str(out/'knowledge-desktop.png'), full_page=True)
     for width in [320,390,768,1440,2560]:
         page.set_viewport_size({'width':width,'height':950}); page.wait_for_timeout(80)
