@@ -3,7 +3,7 @@
 
 # Kitebook
 
-**Your personal knowledge base across every agent, and the way your personal assistants (Grok bot, Hark, Muse, Dots\*) hand tasks to the coding agents on your Mac.**
+**A realtime, versioned workspace across your agents: shared knowledge, files and handoffs that survive sandbox restarts, with coding agents available when needed.**
 
 ![version](https://img.shields.io/badge/version-v0.0.1%20preview-orange) ![status](https://img.shields.io/badge/status-early%2C%20expect%20bugs-red) ![license](https://img.shields.io/badge/license-MIT-blue) ![MCP](https://img.shields.io/badge/protocol-MCP-6f42c1)
 
@@ -60,6 +60,8 @@ flowchart LR
   R -- "result and what was learned" --> KB
 ```
 <sub>\* Dots: untested / unverified.</sub>
+
+Daily agents can exchange files, datasets and handoffs without GitHub, then recover published work after a sandbox restart. See [Restart-safe workspaces](docs/workspace-sync.md).
 
 Every assistant and every coding agent reads and writes the same knowledge base, so what one of them learns or does, the others can see. Your Mac's runner dials out to Kitebook, picks up tasks, asks you first, and hands each one to a coding agent in a separate git worktree.
 

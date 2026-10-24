@@ -4,6 +4,11 @@ export type OpMeta = { desc: string; params: Record<string, P> };
 const S: P = ["string", "space id (optional if you only have one)"];
 
 export const OPS: Record<string, OpMeta> = {
+  sync: { desc: "Recover durable shared files after a sandbox restart. No cursor: consistent snapshot. Continue every page, then save the final cursor for incremental changes. Independent of notification retention. reset_required means discard the token and reconcile a fresh snapshot; remove previously cached files no longer present. Only shared/, kb/, context/ are durable sync roots.", params: { space: S, path: ["string", "folder, default shared; must match cursor"], cursor: ["string", "opaque checkpoint or page cursor"], limit: ["number", "scanned rows per page, max 500"] } },
+  sync_read: { desc: "Read a file at a sync page's fixed snapshot. Use read_cursor from sync, not a current HEAD read. Returns text or content_base64.", params: { space: S, cursor: ["string", "sync read_cursor", true], path: ["string", "file path", true] } },
+  sync_ack: { desc: "Record that this independent local replica applied a complete sync checkpoint. A new sandbox must hydrate even if the same logical agent acknowledged before.", params: { space: S, cursor: ["string", "final sync cursor", true], replica: ["string", "unique local replica id", true] } },
+  sync_status: { desc: "Published file version and actual replica acknowledgements; connectivity is not proof of synchronization.", params: { space: S } },
+  sync_publish: { desc: "Publish 1-2000 durable files/artifacts and a handoff atomically. Every change requires if_match (old sha or none). Retry with the SAME operation_id and payload after an uncertain response; reusing the id with other content is refused.", params: { space: S, operation_id: ["string", "stable retry id", true], changes: ["array", "batch changes with if_match", true], message: ["string", "publication summary"] } },
   whoami: { desc: "Your peer identity, the spaces you can use, and can: what this connection may do in plain words (e.g. \"pi can: read and edit kb/pi/. Can't: delete files, send tasks.\"). When the user asks what was approved, tell them exactly that sentence.", params: {} },
   revoke_self: { desc: "End your own credential now (uninstall, logout, a leaked token). A peer token revokes your peer; an OAuth token ends its grant (every token from that sign-in). Your event subscriptions end with it. The owner has to connect you again afterwards.", params: {} },
   ls: { desc: "List a directory in the shared space (with blob sha and size)", params: { space: S, path: ["string", "directory, default root"], ref: ["string", "commit, default main"] } },
@@ -15,7 +20,7 @@ export const OPS: Record<string, OpMeta> = {
   write: { desc: "Create or overwrite a file (one commit). Use if_match=<sha> (or 'none' for new files) to avoid clobbering others. Binary: send content_base64 instead of content. Big files go to the host blob store (R2, local disk or S3) when configured.",
     params: { space: S, path: ["string", "file path", true], content: ["string", "full file content (text)"], content_base64: ["string", "file bytes, base64 (binary)"], if_match: ["string", "expected current sha, or 'none'"], message: ["string", "commit message"] } },
   batch: { desc: "Many file changes as ONE commit, all-or-nothing. changes = [{path, content} | {path, content_base64} | {path, sha} (reuse a blob the server has; see has) | {path, edits:[{old,new,all?}]} | {path, delete:true}], each may carry if_match. skip_rejected:true skips secret/denylisted files instead of failing.",
-    params: { space: S, changes: ["array", "list of changes", true], message: ["string", "commit message"], skip_rejected: ["boolean", "skip files refused by the secret guard"] } },
+    params: { space: S, changes: ["array", "list of changes", true], message: ["string", "commit message"], skip_rejected: ["boolean", "skip files refused by the secret guard"], operation_id: ["string", "optional stable retry identifier"] } },
   has: { desc: "Which of these content shas (sha256 of the file bytes) the server is missing. Use before a big upload so you only send new content.",
     params: { space: S, shas: ["array", "sha256 hex strings (max 5000)", true] } },
   patch: { desc: "Edit a file by exact string replacement without resending it. Either old+new, or edits=[{old,new,all?}] applied in order (all-or-nothing). Each old must match once unless all:true.",
@@ -154,7 +159,7 @@ export const OPS: Record<string, OpMeta> = {
   kb_get: { desc: "One knowledge-base entry in full (id from kb_search/kb_list; it's the file path, or path#n for a section of a plain markdown file). History: log --path <path>.", params: { space: S, id: ["string", "entry id", true] } },
   kb_list: { desc: "List knowledge-base entries (oldest change first), filtered by scope/kind/origin/key_prefix. With since=<kb_version> you get only what changed after it plus removed ids, and a cursor for next time (how caches stay in sync).",
     params: { space: S, scope: ["string", "global, project:<name>, or all (default)"], kinds: ["array", "only these kinds"], origin: ["string", "only this origin"], key_prefix: ["string", "only keys starting with this"],
-      since: ["number", "kb_version cursor: changes after it, plus removed"], limit: ["number", "default 100 (max 1000)"], full: ["boolean", "full text instead of a 1200-char preview"], include_superseded: ["boolean", "also replaced entries (default true with since)"] } },
+      since: ["number", "kb_version cursor: changes after it, plus removed"], limit: ["number", "default 100 (max 1000)"], recent: ["boolean", "newest changes first (for browsing, not incremental caches)"], full: ["boolean", "full text instead of a 1200-char preview"], include_superseded: ["boolean", "also replaced entries (default true with since)"] } },
   kb_forget: { desc: "Remove knowledge-base entries (deletes their files in one commit; history keeps the old text). By id, ids, or scope + key/keys. Needs write on the path.",
     params: { space: S, id: ["string", "entry id"], ids: ["array", "several entry ids"], scope: ["string", "scope for key/keys (default global)"], key: ["string", "entry key"], keys: ["array", "several keys"] } },
 };
@@ -199,7 +204,7 @@ export class RelayError extends Error { constructor(public status: number, msg: 
 export type Peer = { id: string; name: string; kind: string; grant?: string }; // grant: the OAuth family id when the caller used an OAuth token
 export type Res = { ok: true; result: any } | { ok: false; status: number; error: string; retry_after?: number; logged?: boolean }; // retry_after: seconds, on 429; logged: a 500 already in the recent-errors ring (src/devlog.ts)
 
-export const READ_OPS = ["agent_models", "session_status", "mcp_status", "status", "brief", "presence", "code_status", "whoami", "check", "ls", "stat", "read", "glob", "grep", "log", "diff", "changes", "peers", "inbox", "task_list", "task_get", "describe", "task_status", "ask_get", "kb_search", "kb_get", "kb_list", "relay_logs", "experimental", "dev_mode", "ci_status"];
+export const READ_OPS = ["agent_models", "session_status", "mcp_status", "status", "brief", "presence", "code_status", "whoami", "check", "ls", "stat", "read", "glob", "grep", "log", "diff", "changes", "peers", "inbox", "task_list", "task_get", "describe", "task_status", "ask_get", "kb_search", "kb_get", "kb_list", "relay_logs", "experimental", "dev_mode", "ci_status", "sync", "sync_read", "sync_status"];
 
 // OpenAPI 3.1 for agents without MCP (GPT Actions, function-calling frameworks, codegen)
 export function openapi(origin: string) {

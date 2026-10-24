@@ -24,6 +24,7 @@ import { RELEASE_KEY } from "../client/release-key.ts";
 import { OWNER_JS } from "./policy-ui.ts";
 import { LINK_RE } from "./login.ts";
 import { settingsPage } from "./settings.ts";
+import { KNOWLEDGE_HTML, KNOWLEDGE_CSS, KNOWLEDGE_JS } from "./workspace-ui.ts";
 import { THEME_CSS, BASE_CSS, FOLD_CSS, FOLD_JS, WORKSPACE_CSS, WORKSPACE_JS, workspaceNav } from "./ui.ts";
 import { ingressOf, lockdownFor, hasLocalListener, edgeRoutes } from "./ingress.ts";
 
@@ -257,6 +258,12 @@ export async function startFetch(req: Request, env: any, url: URL, h: H): Promis
       return j({ ok: true, result: { ...r, mcp, prompt: appPrompt(mcp) } }); }
     catch (e: any) { return j({ ok: false, error: String(e.message ?? e) }, 400); }
   }
+  if (b.op === "workspace") {
+    const own = await sessionOwner(req, h.dir); if (!own) return j({ ok: false, error: "sign in first" }, 401);
+    if (["save", "forget"].includes(b.action) && !await own.dir.actUse(own.cred, String(b.nonce ?? ""))) return j({ ok: false, error: "This button expired. Reload and try again." }, 403);
+    try { return j({ ok: true, result: await own.dir.admin("workspace", { space: String(b.space ?? "main"), action: b.action, args: b.args }) }); }
+    catch (e: any) { return j({ ok: false, error: String(e.message ?? e) }, 400); }
+  }
   if (b.op === "status") { // read-only glance for the phone: peers + online, open tasks, needs-you, recent results
     const own = await sessionOwner(req, h.dir); if (!own) return j({ ok: false, error: "sign in first" }, 401);
     try { await own.dir.ensureMain(); const r = await own.dir.admin("status", {}); return j({ ok: true, result: { ...r, setup: setupState(r) } }); } catch (e: any) { return j({ ok: false, error: String(e.message ?? e) }, 500); }
@@ -424,7 +431,7 @@ ${card(s.open ? "Already have an account?" : s.fresh ? "Signed in before?" : "Si
 <details id="rcbox"${s.fresh ? " open" : ""}><summary>Use a recovery code${s.multi ? "" : " (or this Kitebook's ADMIN_TOKEN)"}</summary><label for="key">${s.multi ? "Recovery code" : "Recovery code or ADMIN_TOKEN"}</label><input type="password" id="key" autocomplete="current-password"><div class="bar"><button id="signin">Sign in</button></div></details>${s.open ? "" : s.multi ? `<p class="note">New here? Signup on this Kitebook is by its operator. Ask them for an account.</p>` : s.fresh ? "" : `<details id="firstd"><summary>Run this Kitebook yourself and never signed in?</summary><p class="note">${FIRST(s.origin)}</p></details>`}</div></details>`)}
 <div id="keybox" hidden><p class="st">You're in. This browser stays signed in for 30 days.</p><details id="rcsave"><summary>Save a recovery code (optional)</summary><p class="note">It signs you in if you ever lose every browser and passkey. It can't be shown again; a password manager is a good place.</p>${code("adminkey")}</details>
 <div class="bar"><button id="cont">Continue</button></div></div></main>`
-    : `<main id="home"><p id="nowline" class="nowline" role="status"></p><div id="devs"></div>
+    : `${KNOWLEDGE_HTML}<main id="home" hidden><p id="nowline" class="nowline" role="status"></p><div id="devs"></div>
 <section id="setup" hidden><div id="steps"><ol class="steps">
 <li class="step cur" id="step-mac" aria-current="step"><p>Step 1 of 3 · Connect your Mac: run one line in Terminal. <span class="tag state">Now</span></p><div class="act">${mintBtn("runner", "Create install command", " main")}</div></li>
 <li class="step" id="step-agent"><p>Step 2 of 3 · Connect an assistant, like Claude.ai, ChatGPT, Hark or Claude Code. <span class="tag state">Next</span></p>${localOnly}<div class="act"><button id="pick" class="main">Choose an app</button></div></li>
@@ -446,8 +453,8 @@ ${app("Any other agent", `Point it at the setup guide (OpenAPI 3.1: <code>${o}/o
   const data = JSON.stringify(s).replace(/</g, "\\u003c");
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><meta name="color-scheme" content="light dark"><title>${s.acct === null ? "Sign in" : "Workspace"} · Kitebook</title>
 <link rel="alternate" type="text/markdown" href="/llms.txt">
-<style>${THEME_CSS}${BASE_CSS}${FOLD_CSS}${START_CSS}${s.acct === null ? "" : WORKSPACE_CSS}</style></head><body${s.acct === null ? "" : ' class="workspace"'}>${s.acct === null ? "" : `<div class="workspace-shell">${workspaceNav("home")}<div class="workspace-main" id="workspace-content" tabindex="-1">`}<div class="page">
-<header class="top">${s.acct === null ? "<h1>Kitebook</h1>" : `<div class="heading"><h1>Workspace</h1><p>Keep your agents and their work in view.</p></div><a id="settings" class="btn" href="/settings#apps">Manage apps</a><button id="signout" class="link">Sign out</button>`}</header>
+<style>${THEME_CSS}${BASE_CSS}${FOLD_CSS}${START_CSS}${s.acct === null ? "" : KNOWLEDGE_CSS}${s.acct === null ? "" : WORKSPACE_CSS}</style></head><body${s.acct === null ? "" : ' class="workspace"'}>${s.acct === null ? "" : `<div class="workspace-shell">${workspaceNav("home")}<div class="workspace-main" id="workspace-content" tabindex="-1">`}<div class="page">
+<header class="top">${s.acct === null ? "<h1>Kitebook</h1>" : `<div class="heading"><h1>Workspace</h1><p>Keep knowledge and working files across agents.</p></div><a id="settings" class="btn" href="/settings#apps">Manage apps</a><button id="signout" class="link">Sign out</button>`}</header>
 ${s.acct === null ? "" : `<div id="autorunbanner" class="warn devbar" role="status" hidden></div><div id="pwbanner" class="warn" role="status" hidden></div><div id="downbanner" class="warn" role="alert" hidden></div>`}${out}
 ${s.acct === null ? `<p class="note">For agents: <a href="/llms.txt">setup guide</a> · <a href="/openapi.json">OpenAPI</a> · connector address <code>${o}/mcp</code></p>` : ""}</div>
 ${s.acct === null ? "" : "</div></div>"}<p id="msg" class="toast" role="status" aria-live="polite"></p>
@@ -527,7 +534,7 @@ b.hidden=!out.length;b.replaceChildren(...out)}
 let LAST=null;const busy=box=>{const fo=document.activeElement;return!!box&&([...box.querySelectorAll("input.ans")].some(i=>i.value||i===fo)||(fo&&fo.tagName==="SELECT"&&box.contains(fo))||!!box.querySelector("details.menu[open]"))}; /* never redraw under a half-typed note, an open picker or an open ⋯ menu */
 async function stat(force){pwBanner().catch(()=>{});const box=$("stat");if(!box)return;if(!force&&(busy(box)||busy($("taskview"))||busy($("peers"))))return;
 const r=await post({op:"status"}).catch(()=>null);if(!r||!r.ok){box.replaceChildren(el("p","note",r?r.error:"can't reach the server"));return}
-LAST=r.result;autorunBanner(LAST.spaces);downBanner(LAST.spaces);nowLine(LAST.spaces);home(LAST.spaces);peers(LAST.spaces);setup(LAST.setup);if(TV)taskView()}
+LAST=r.result;if($("memory-attention")){const n=LAST.spaces.reduce((sum,sp)=>sum+(sp.needs_you||[]).filter(t=>!t.approved).length,0);$("memory-attention").hidden=!n;$("memory-attention").textContent=n+" tasks need your attention. Review tasks & approvals."}autorunBanner(LAST.spaces);downBanner(LAST.spaces);nowLine(LAST.spaces);home(LAST.spaces);peers(LAST.spaces);setup(LAST.setup);if(TV)taskView()}
 // Home: only what can be acted on now. A task that needs you: title + Approve; running: title + Cancel; then at most 3 recent ones.
 function home(spaces){const out=[],attention=[],running=[],recent=[],many=spaces.length>1,ws=sp=>many?" · "+sp.space:"";let rec=[];
 for(const sp of spaces){if(sp.paused)out.push(el("p","warn","Paused: no new tasks are accepted until you resume "+(many?"workspace "+sp.space:"this workspace")+"."));
@@ -581,7 +588,7 @@ for(const l of R.logins||[]){const w=el("div","row");w.append(el("span","t","Sig
 box.replaceChildren(...out)}
 // ---- a task's own page (/start#task-<id>): everything about it, and every action on it ----
 let TV=null,TVD=null,TVP=0;const find=id=>{for(const sp of (LAST&&LAST.spaces)||[]){for(const k of ["needs_you","open","recent","quick"]){const t=(sp[k]||[]).find(x=>x.id===id);if(t)return{sp,t,k:k==="open"&&sp.needs_you.some(n=>n.id===id)?"needs_you":k,n:sp.needs_you.find(n=>n.id===id)}}}return null};
-function seekTask(){const m=location.hash.match(/^#task-(.+)$/),id=m?decodeURIComponent(m[1]):null;if(id!==TV){TV=id;TVD=null}if($("home"))$("home").hidden=!!TV;if($("taskview"))$("taskview").hidden=!TV;if(TV)taskView();else scrollTo(0,0)}
+function seekTask(){const m=location.hash.match(/^#task-(.+)$/),id=m?decodeURIComponent(m[1]):null;if(id!==TV){TV=id;TVD=null}const tasks=!!TV||/^#(tasks|more|setup|step-)/.test(location.hash);if($("home"))$("home").hidden=!!TV||!tasks;if($("knowledge"))$("knowledge").hidden=tasks;if($("taskview"))$("taskview").hidden=!TV;if(TV)taskView();else scrollTo(0,0)}
 addEventListener("hashchange",seekTask);
 function taskView(){const box=$("taskview");if(!box||!TV)return;if(busy(box))return;const f=find(TV),o=[],back=el("a","back","← Home");back.href="#";o.push(back);
 if(!f){o.push(el("h2","",TV),el("p","sub",LAST?"Not among your open or recent tasks.":"Loading…"))}
@@ -616,6 +623,7 @@ async function tvPresence(){if(!TV||Date.now()-TVP<4000)return;TVP=Date.now();co
 const s=r.result.spaces.flatMap(x=>x.sessions).find(x=>x.task===TV);p.hidden=!s;if(s)p.textContent=s.line+(s.who?" · on "+s.who:"")}
 if(S.acct){seekTask();stat();devs();OWN.read().then(st=>OWN.ready(S.acct,st.owner_keys)).catch(()=>{});/* a Kitebook server open browser registers its key now, so the Mac trusts it right away */
 setInterval(()=>{if(!document.hidden)devs()},15000);setInterval(()=>{if(!document.hidden)stat()},15000);setInterval(()=>{if(!document.hidden&&TV)tvPresence()},5000)}
+${KNOWLEDGE_JS}
 if(S.acct&&(S.oauth||S.next)){msg("Signed in. Returning to the approval page…");location.assign(S.oauth||S.next)}
 </script></body></html>`;
 }

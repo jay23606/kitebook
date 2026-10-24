@@ -4,7 +4,7 @@ import { ACTIVE } from "./util.ts";
 import { SpaceCore } from "./core.ts";
 
 export class SpaceGc extends SpaceCore {
-  // ---------- retention: Kitebook holds live state only; code and long-term context live in git ----------
+  // ---------- retention: tasks/events are bounded; shared files and knowledge have durable version history ----------
   // Finished tasks (their rows, events, live rows and tasks/<id>/ files, history included) and old events go after N days
   // (default 30: RETENTION_DAYS env, or per space via admin `retention`; 0 = keep forever). Blobs nothing references any more go through blob GC (gc below).
   // Never touched: active tasks, shared/ and other files, members, grants, approvals in flight, and the KB (kb/ + context/ files and the kb_* index).

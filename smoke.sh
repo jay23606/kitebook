@@ -208,13 +208,16 @@ h glob 'shared/**' | jq -e '.files==["shared/race.dat","shared/same.md","shared/
   && h ls nosuch 2>&1 | grep -q "no such directory" && h ls shared/sp 2>&1 | grep -q "no such directory" && pass "glob/ls by prefix range: same results, 404 kept" || die "glob/ls range: $(h glob 'shared/**' | jq -c .files)"
 
 # MCP front door
+WBC=0; python3 scripts/workspace-browser.py "$KITEBOOK_URL" --jar "$FJ0" > $T/workspace-browser.log 2>&1 || WBC=$?
+if [ "$WBC" = 3 ]; then skipb "workspace browser (no Chromium/Playwright)"; elif [ "$WBC" != 0 ]; then cat $T/workspace-browser.log; die "workspace browser"; fi
+KITEBOOK_RECOVERY_STATE=$T/workspace-recovery.json bun scripts/workspace-check.ts > $T/workspace-recovery.log 2>&1 || { cat $T/workspace-recovery.log; die "workspace recovery"; }
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.serverInfo|.name=="Kitebook" and .title=="Kitebook" and (.description|test("knowledge base for your AI assistants and coding agents")) and .version' >/dev/null || die "mcp initialize"
 N=$(curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq '.result.tools|length'); [ "$N" -gt 15 ] || die "mcp tools/list ($N tools)"
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"path":"shared/spec.md"}}}' | jq -e '.result.structuredContent.content=="# Spec v1\n"' >/dev/null && pass "mcp tools/call read" || die "mcp tools/call read"
 
 # git-first: the repos/ mirror is opt-in (no runner has opted in yet), so nothing advertises it
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '[.result.tools[].name]|index("has")==null and index("task_create")!=null' >/dev/null \
-  && ! curl -s $KITEBOOK_URL/llms.txt | grep -q 'repos/' && curl -s $KITEBOOK_URL/llms.txt | grep -q 'Kitebook holds live state only' && h describe | jq -e '.mirror==null and .retention_days==30 and .git.push' >/dev/null \
+  && ! curl -s $KITEBOOK_URL/llms.txt | grep -q 'repos/' && curl -s $KITEBOOK_URL/llms.txt | grep -q 'Kitebook keeps durable shared files' && h describe | jq -e '.mirror==null and .retention_days==30 and .git.push' >/dev/null \
   && pass "mirror off by default: no has tool, no repos/ in llms.txt, describe has no mirror; guide says code lives in git" || die "mirror default off"
 
 # local project + runner with a fake agent (approve=auto is test-only)
@@ -683,6 +686,7 @@ curl -sf $KITEBOOK_URL/health >/dev/null 2>&1 && die "kitebook did not stop"
 KITEBOOK_EVENTS_TEST=1 KITEBOOK_OPEN_SIGNUP=1 KITEBOOK_ALLOWED_HOSTS=kb-tunnel.test cf dev > $T/server2.log 2>&1 & SP=$!   # restarted with open signup: the /start tests below use web signup; kb-tunnel.test: the tunnel name of the auth-500 checks
 for i in $(seq 1 60); do curl -sf $KITEBOOK_URL/health >/dev/null && break; sleep 1; done
 curl -sf $KITEBOOK_URL/health >/dev/null || { cat $T/server2.log; die "server did not restart"; }
+KITEBOOK_RECOVERY_STATE=$T/workspace-recovery.json bun scripts/workspace-check.ts --resume >> $T/workspace-recovery.log 2>&1 || { cat $T/workspace-recovery.log; die "workspace after restart"; }
 bun $T/flaky.ts $T/flaky2.jsonl 0 & FKP=$!; sleep 0.3
 h stat shared/co/late.md >/dev/null # ordinary traffic; the persisted alarm (or the wake-up safety net) drives the outbox
 for i in $(seq 1 80); do grep -q late.md $T/flaky2.jsonl 2>/dev/null && break; sleep 0.25; done
@@ -2148,7 +2152,7 @@ trap 'kill $SP ${IMP:-} 2>/dev/null; killmine node_modules/.bin/vite; killmine "
 for i in $(seq 1 40); do grep -q "approvals:" $T/im.log && break; sleep 0.5; done
 HOME=$IH KITEBOOK_NO_OPEN=1 bun $IH/.kitebook/current/runner.ts open --print > $T/imo.out 2>&1; IMU=$(grep -o "$O/start#login=[^ ]*" $T/imo.out)
 echo "$IMU" | grep -Eq "#login=ll\.erin\.[A-Za-z0-9_-]+&trust=[A-Za-z0-9_-]{30,}$" || { cat $T/imo.out $T/im.log; die "kitebook open trust link"; }
-BCT=0; python3 scripts/browser-check.py "$IMU" --profile $T/prof1 --wait-gone "Signing in" --click "#more > summary" --expect "Signed in to erin" --linger 3 > $T/bct.out 2>&1 || BCT=$?
+BCT=0; python3 scripts/browser-check.py "$IMU" --profile $T/prof1 --wait-gone "Signing in" --click 'a[href="/start#tasks"]' --click "#more > summary" --expect "Signed in to erin" --linger 3 > $T/bct.out 2>&1 || BCT=$?
 if [ $BCT = 3 ]; then skipb "browser Settings checks: no Chromium/Playwright here"; else
 for i in $(seq 1 30); do [ "$(jq '.ownerKeys|length' $PC2)" -gt "$IMNK" ] && break; sleep 0.5; done
 [ $BCT = 0 ] && [ "$(jq '.ownerKeys|length' $PC2)" = $((IMNK + 1)) ] && grep -q "settings: trusted .* signed in with kitebook open" $T/im.log && pol && jq -e '.result.owner_keys|map(select(.proof))|length==1' $T/pol.json >/dev/null \

@@ -9,6 +9,8 @@ import { blobStore, b64encode, b64decode, INLINE_MAX, EXTERNAL_AT } from "./blob
 import * as KB from "./kb.ts";
 import { HELD, RELAY, OWNER, STUCK_STATES, now } from "./space/util.ts";
 import { SpaceTasks, taskOps } from "./space/tasks.ts";
+import { ownerWorkspace } from "./workspace-ui.ts";
+import { SYNC_SCHEMA, syncOps } from "./space/sync.ts";
 import { fileOps } from "./space/files.ts";
 import { peerOps } from "./space/peers.ts";
 import { kbOps } from "./space/kb.ts";
@@ -30,6 +32,7 @@ export class Space extends SpaceTasks {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
+    this.sql.exec(SYNC_SCHEMA);
     this.sql.exec(`
 create table if not exists meta(k text primary key, v text);
 create table if not exists members(peer_id text primary key, name text, kind text, verbs text, paths text, webhook text, revoked integer default 0);
@@ -258,6 +261,8 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
   }
   // whether any runner here can reach its owner's phone (approve_ways has phone): the consent page offers "Send to my phone" only then
   async phoneReady() { for (const r of this.sql.exec("select name from members where kind='runner' and revoked=0").toArray() as any[]) { const ad = await this.runnerAd(r.name); if ((ad?.approve_ways ?? []).includes("phone")) return true; } return false; }
+  async workspaceView(a: any) { return ownerWorkspace(this, a); }
+
   async exportAll() {
     const t = (n: string) => this.sql.exec(`select * from ${n}`).toArray();
     const blobs: any[] = []; this.exporting++; // blob GC waits while an export is reading external blobs (see gc)
@@ -266,7 +271,7 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
       else { const u = await this.store?.get(b.sha); if (!u) throw new Error(`blob ${b.sha} missing from ${b.loc}`); blobs.push({ sha: b.sha, size: b.size, enc: b.enc, ext_b64: b64encode(u) }); }
     } } finally { this.exporting--; }
     return { format: "relay-space/1", exported: now(), meta: t("meta"), members: t("members"), blobs, commits: t("commits"),
-      changes: t("changes"), tree: t("tree"), tasks: t("tasks"), events: t("events"), task_notes: t("task_notes") };
+      changes: t("changes"), tree: t("tree"), tasks: t("tasks"), events: t("events"), task_notes: t("task_notes"), sync_receipts: t("sync_receipts") };
   }
   async importAll(dump: any) {
     if (dump?.format !== "relay-space/1") throw new Error("not a relay-space/1 export");
@@ -280,13 +285,15 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
     this.ctx.storage.transactionSync(() => {
       // The copy keeps its own id/name, and membership comes from this host's grants, not the source's.
       // Unfinished tasks can't continue here (their runner belongs to the old space), so they arrive as failed.
-      for (const n of ["meta", "blobs", "commits", "changes", "tree", "tasks", "events", "task_notes"]) for (const row of dump[n] ?? []) {
-        if (n === "meta" && ["id", "name"].includes(row.k)) continue;
+      for (const n of ["meta", "blobs", "commits", "changes", "tree", "tasks", "events", "task_notes", "sync_receipts"]) for (const row of dump[n] ?? []) {
+        if (n === "meta" && ["id", "name", "acct", "quota_mb", "sync_epoch"].includes(row.k)) continue;
         if (n === "tasks" && !["succeeded", "failed", "rejected", "cancelled"].includes(row.state)) row.state = "failed";
         const k = Object.keys(row); this.sql.exec(`insert or replace into ${n}(${k.join(",")}) values(${k.map(() => "?").join(",")})`, ...k.map(x => row[x]));
       }
       this.sql.exec("delete from blob_put where sha in (select sha from blobs)"); // uploads that landed in a row aren't pending any more
     });
+    this.sql.exec("insert or replace into meta values('sync_epoch',?)", crypto.randomUUID());
+    this.sql.exec("delete from sync_replicas");
     await KB.rebuild(this); // the KB index is derived data: rebuilt from the imported kb/ files
     return { ok: true, commits: dump.commits.length };
   }
@@ -341,7 +348,7 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
   }
 
   // The op table, one module per area (fileOps: src/space/files.ts, peerOps: peers.ts, taskOps: tasks.ts, kbOps: kb.ts).
-  impl: Record<string, Op> = { ...fileOps.call(this), ...peerOps.call(this), ...taskOps.call(this), ...kbOps.call(this), ...askOps.call(this), ...sessionOps.call(this), ...presenceOps.call(this), ...briefOps.call(this), ...healthOps.call(this),
+  impl: Record<string, Op> = { ...fileOps.call(this), ...syncOps.call(this), ...peerOps.call(this), ...taskOps.call(this), ...kbOps.call(this), ...askOps.call(this), ...sessionOps.call(this), ...presenceOps.call(this), ...briefOps.call(this), ...healthOps.call(this),
     // every task an app sends answers with the brief's etag, so a client that cached the owner's instructions knows when to re-read them
     task_create: async (peer, a) => { const r = await this.taskCreate(peer, a); if (peer.kind === "runner" || !r || typeof r !== "object") return r;
       const v = await briefView(this, peer).catch(() => null); return v ? { ...r, brief: { etag: v.etag, chars: v.chars, hint: v.text ? "the owner's standing instructions; re-read them (describe, or the brief tool) if your copy has another etag" : "no instructions from the owner yet" } } : r; } };

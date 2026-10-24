@@ -96,6 +96,8 @@ export class SpaceCore extends DurableObject<Env> {
   dirOk = (m: Member, d: string) => !d || this.pathsFor(m, "read").some(g => g.startsWith("**") || g.startsWith(d + "/") || globMatch(g, d) || globMatch(g, d + "/x"));
   // an app without "send tasks": say what the owner can do about it (agents kitebook this to their human as is; never the account key)
   need(peer: Peer, verb: string, path?: string): Member {
+    // Only internal, authenticated owner UI/RPC calls construct this system identity. Public peers have generated p_ ids.
+    if (peer.id === "owner" && peer.kind === "system") return { peer_id: "owner", name: "owner", kind: "system", verbs: ["read", "write", "delete", "dispatch"], paths: ["**"], webhook: null, revoked: 0 };
     const m = this.member(peer.id);
     if (!m || m.revoked || !m.verbs.includes(verb)) throw new RelayError(403, verb === "dispatch" && m && !m.revoked ? sendDenied(m.name, this.spaceId) : `no ${verb} access to workspace ${this.spaceId}${verb === "write" && m && !m.revoked ? writeHint(m.name, path) : ""}`);
     if (path !== undefined && !this.pathOk(m, path, verb)) throw new RelayError(403, `no ${verb} access to ${path}${verb === "write" ? writeHint(m.name, path) : ""}`);

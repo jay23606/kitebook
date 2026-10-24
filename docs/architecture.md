@@ -1,6 +1,8 @@
 # How Kitebook works
 
-Kitebook is two things for one person who uses many agents: **a personal knowledge base** that every agent reads and writes, with a summary of what each one did, and **a dispatch path** that lets your personal assistants (Grok bot, Hark, Muse, Dots\*) hand tasks to the coding agents on your Mac.
+Kitebook is a durable realtime workspace for one person who uses many agents: **a personal knowledge base** that every agent reads and writes, with a summary of what each one did, and **a dispatch path** that lets your personal assistants (Grok bot, Hark, Muse, Dots\*) hand tasks to the coding agents on your Mac.
+
+Files, datasets and handoffs under `shared/`, `kb/` and `context/` survive client sandbox loss. Snapshot/checkpoint synchronization uses the durable commit journal independently of notification retention; see [Restart-safe shared workspaces](workspace-sync.md). Search is a derived view over versioned documents.
 
 It has three parts: **personal assistants** (assistants for short) in the cloud that read memory and ask for work, a **server** you own that holds the knowledge base, tasks and approvals, and a **runner** on your computer that asks you and then hands each task to a coding agent. Words in bold below are in the [glossary](glossary.md).
 

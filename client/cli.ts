@@ -234,6 +234,18 @@ if (MAIN) {
       for (const [k, d] of Object.entries<any>(j.ops)) console.log(k.padEnd(14), d.desc);
     } else if (op === "cat") process.stdout.write(await cachedRead(pos[0] ?? kv.path));
     else if (op === "put") console.log(JSON.stringify(await call("write", { path: pos[0], content: await Bun.stdin.text(), ...kv }), null, 1));
+    else if (op === "workspace") {
+      const W = await import("./workspace.ts"), sub = pos[0], dir = pos[1];
+      if (sub === "assist") {
+        console.log(JSON.stringify(await W.assist(call, { goal: kv.goal ?? pos.slice(1).join(" "), project: kv.project, target: kv.to, needsRepository: !!kv.repository, changesCode: !!kv.edit, existingTask: kv.task, operationId: kv["operation-id"] }), null, 1));
+      } else {
+      if (!dir) throw new Error("workspace pull|publish|status <replica-directory> [--path shared/project] [--goal text --done text --next text --questions text]");
+      const remote = URL_ + "#" + (SPACE ?? "default");
+      const result = sub === "pull" ? await W.pull(call, dir, remote, kv.path) : sub === "publish" ? await W.publish(call, dir, remote, kv) : sub === "status" ? W.status(dir, remote) : null;
+      if (!result) throw new Error("workspace: use pull, publish or status");
+      console.log(JSON.stringify(result, null, 1));
+      }
+    }
     else if (op === "kb") {
       const KB = await import("./kb.ts"), sub = pos[0], arg = pos.slice(1).join(" "), list = (v: any) => v == null ? undefined : Array.isArray(v) ? v : String(v).split(",");
       const show = (r: any) => console.log(JSON.stringify(r, null, 1));

@@ -249,6 +249,10 @@ create table if not exists acct(k text primary key, v text);`);
       case "list": return {
         spaces: this.sql.exec("select * from spaces").toArray(),
         peers: this.sql.exec("select p.name,p.kind,p.revoked,c.space_id,c.verbs,c.paths from peers p left join caps c on c.peer_id=p.id").toArray() };
+      case "workspace": {
+        const id = String(a.space ?? "main"); if (!this.sql.exec("select 1 from spaces where id=?", id).toArray().length) throw new Error("no workspace " + id);
+        return await this.space(id).workspaceView(a);
+      }
       case "status": { // the owner's glance at every space: peers + online, open tasks, what needs the owner, recent results (read-only; /start renders it)
         const out: any[] = []; for (const r of this.sql.exec("select id from spaces order by id").toArray()) out.push(await this.space(r.id as string).ownerStatus(this.acct));
         return { account: this.acct, at: new Date().toISOString(), spaces: out };
