@@ -1,0 +1,37 @@
+name: Bug report
+description: Something in the server, the runner, the CLI or /start doesn't work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Security problem? Please don't file it here. See SECURITY.md. Never paste tokens, invite links, runner.json or .dev.vars."
+  - type: textarea
+    id: what
+    attributes: { label: What happened, description: What you did, what you expected, and what you got instead. }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Steps to reproduce, placeholder: "1. npx cf dev\n2. open /start ...\n3. ..." }
+    validations: { required: true }
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      options: [Kitebook (Worker / Durable Objects), Runner (client/runner*.ts), kitebook CLI / admin CLI, /start page or OAuth connect, MCP (Claude.ai / ChatGPT / stdio bridge), Knowledge base, Docs, Not sure]
+    validations: { required: true }
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your computer (where the runner runs)
+      options: [macOS, Linux, Windows 10/11, No runner involved]
+  - type: dropdown
+    id: host
+    attributes:
+      label: Where the server runs
+      options: [One-step install (get.sh / get.ps1), always-on Mac (mac-host.sh), Cloudflare (deployed), self-hosted workerd / Docker, local cf dev or quickstart.sh]
+  - type: input
+    id: version
+    attributes: { label: Commit / version, description: "kitebook status, git rev-parse --short HEAD, or the first lines of kitebook doctor" }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs, description: "kitebook doctor, kitebook logs, the smoke FAIL line or the server log. Redact tokens, invite links and your Kitebook's address if it's private.", render: shell }

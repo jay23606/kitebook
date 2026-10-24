@@ -1,0 +1,6 @@
+# Notes for coding agents working in a Kitebook checkout
+
+- **Updating Kitebook: `git pull` in this checkout is allowed and safe.** If this checkout is the one the owner's Mac runner runs from, the runner checks the pull itself (clean tree, a fast-forward to a commit on origin's main or dev, fetched by the runner, then a selfcheck of the new code) and restarts into it once idle; anything else (a local commit, another remote or branch, a downgrade, local edits) is refused and never run. You don't need to ask before a plain `git pull`. On a runner from before this (afa48a4 / 183fa70), restart it once after the first pull: `kitebook restart runner`, or `bun client/runner.ts service <runner.json> restart runner` from this checkout.
+- Don't commit to the checkout the runner runs from, and don't edit runner.json, `.dev.vars` or `~/.kitebook`; build changes on a branch in another worktree.
+- Builders branch from and merge into `dev`; `main` moves only by `scripts/promote.sh`. Tests: `bash smoke.sh` (ALL PASSED) and `npm run typecheck`. See CONTRIBUTING.md and docs/.
+- **Don't grow the smoke.** It has a check budget (`CHECK_BUDGET` in smoke.sh; a full run over it fails): extend or replace an existing check for a new feature instead of adding a section, keep pure logic in `bun test client/`, and never check UI wording. See CONTRIBUTING.md "Tests".

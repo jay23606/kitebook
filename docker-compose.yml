@@ -1,0 +1,25 @@
+# Kitebook's server in Docker: docker compose up -d   (data in the relay-data volume; admin token: see the Dockerfile header)
+# Reach it at http://127.0.0.1:7820 on this machine (local: the dashboard). For a public address, the optional Cloudflare tunnel:
+#   TUNNEL_TOKEN=<token from the Cloudflare dashboard> docker compose --profile tunnel up -d   (route the hostname to http://kitebook:7821,
+#   the public edge listener: /mcp, /v1, OAuth, /health; the dashboard stays off the public address, src/ingress.ts)
+# The runner stays native on your computer (it needs your agents, repos and keychain): install the kitebook binary there.
+services:
+  kitebook:
+    image: ghcr.io/um1b/kitebook:${KITEBOOK_TAG:-${RELAY_TAG:-latest}}
+    build: .
+    restart: unless-stopped
+    ports: ["127.0.0.1:7820:7820", "127.0.0.1:7821:7821"] # 7820 local, 7821 the edge a tunnel or reverse proxy points at
+    environment:
+      KITEBOOK_ADMIN_TOKEN: ${KITEBOOK_ADMIN_TOKEN:-${RELAY_ADMIN_TOKEN:-}} # RELAY_ADMIN_TOKEN: its name before the rename
+    volumes: ["relay-data:/data"]
+  cloudflared:
+    image: cloudflare/cloudflared:latest   # pin a version you have checked if you prefer
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      kitebook: { condition: service_healthy }
+volumes:
+  relay-data:

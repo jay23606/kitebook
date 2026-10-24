@@ -1,0 +1,20 @@
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: "Never paste tokens, invite links, `runner.json`, `.dev.vars` or approval codes. `kitebook doctor` output is safe to share once you've removed your Kitebook's address if it's private."
+  - type: textarea
+    id: question
+    attributes: { label: Your question, description: "What you're trying to do and where it stopped." }
+    validations: { required: true }
+  - type: dropdown
+    id: setup
+    attributes:
+      label: How you run Kitebook
+      options: [One-step install (get.sh / get.ps1), always-on Mac (mac-host.sh), Cloudflare, self-hosted workerd / Docker, local cf dev or quickstart.sh, Not installed yet]
+  - type: input
+    id: apps
+    attributes: { label: Assistant and coding agent, placeholder: "e.g. Claude.ai + Claude Code on macOS" }
+  - type: textarea
+    id: tried
+    attributes: { label: What you tried, render: shell }

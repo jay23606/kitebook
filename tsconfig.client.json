@@ -1,0 +1,20 @@
+{
+	// The Mac runner and its CLIs (client/*.ts, scripts/*.ts) run on Bun, not Workers: their own check with Bun's types.
+	"compilerOptions": {
+		"target": "es2024",
+		"lib": ["es2024", "dom"],
+		"module": "preserve",
+		"moduleResolution": "bundler",
+		"moduleDetection": "force",
+		"types": ["bun"],
+		"strict": true,
+		"noEmit": true,
+		"allowImportingTsExtensions": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"skipLibCheck": true
+	},
+	"include": ["client/*.ts", "scripts/*.ts"],
+	// tests of server code (they import src/space/*, which needs the Workers types) are checked by tsconfig.test.json
+	"exclude": ["client/presence.test.ts", "client/devlog.test.ts", "client/device.test.ts", "client/join.test.ts", "client/frictions.test.ts", "client/ingress.test.ts", "client/password.test.ts", "client/connect-any-app.test.ts", "client/remote-presence.test.ts", "client/passkey.test.ts", "client/account-store.test.ts"]
+}

@@ -1,0 +1,41 @@
+{
+	"name": "relay-cf",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "cf dev",
+		"build": "cf build",
+		"deploy": "cf deploy",
+		"typecheck": "cf workers types > /dev/null && tsc -p tsconfig.json && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json",
+		"test": "bun test client/ && SKIP_NTFY=1 ./smoke.sh",
+		"test:fast": "bun test client/ && SKIP_NTFY=1 SMOKE_ONLY=core ./smoke.sh",
+		"smoke": "./smoke.sh"
+	},
+	"engines": {
+		"node": ">=22",
+		"bun": ">=1.4"
+	},
+	"devDependencies": {
+		"@cloudflare/vite-plugin": "2.0.0-beta.v.1",
+		"@types/bun": "^1.4.3",
+		"cf": "1.0.0-beta.18",
+		"typescript": "^7.0.2",
+		"vite": "^8.3.0"
+	},
+	"dependencies": {
+		"@better-auth/cimd": "1.7.11",
+		"@better-auth/core": "1.7.11",
+		"@better-auth/kysely-adapter": "1.7.11",
+		"@better-auth/mcp": "1.7.11",
+		"@better-auth/oauth-provider": "1.7.11",
+		"@better-auth/passkey": "1.7.11",
+		"aws4fetch": "^1.0.20",
+		"better-auth": "1.7.11",
+		"better-call": "1.4.2",
+		"jose": "6.2.12",
+		"kysely": "0.29.7",
+		"kysely-durable-objects": "0.2.2",
+		"zod": "4.6.7"
+	}
+}

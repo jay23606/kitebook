@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.cloudflare/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+*.log
+.DS_Store
+.dev.vars
+.cloudflare/
+.wrangler/
+.relay-data/
+# `bun install` writes it next to the tracked package-lock.json; untracked, it must never block an update (git-pull.ts, git-channel.ts check tracked changes only)
+bun.lock
+bun.lockb
+
+# release signing keys never live in the repo (scripts/sign-release.ts refuses a key path inside it)
+*release-key*.json
+*.pem
+.kitebook-tunnel
+.kitebook-quickstart*
+.kitebook-backup/
+# the same files under their names from before the rename (Relay -> Kitebook), left in older checkouts
+.relay-tunnel
+.relay-quickstart*
+.relay-backup/
+*.bun-build
+.kitebook-commit

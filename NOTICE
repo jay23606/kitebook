@@ -1,0 +1,11 @@
+Kitebook
+Copyright (c) 2026 um1b. MIT License (see LICENSE).
+
+This product includes code adapted from Paseo (https://github.com/getpaseo/paseo),
+Copyright (c) 2025-present Mohamed Boudra, licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0):
+  - client/sessions-store.ts: the Claude Code project-folder encoding (claudeDirName), adapted from
+    packages/server/src/server/agent/providers/claude/project-dir.ts. Changed: synchronous, no realpath,
+    folded into Kitebook's read-only session store.
+The on-disk session layouts the store reads (Codex, Pi, Gemini, Copilot, opencode, Cursor) were studied in
+Paseo's providers; that code is Kitebook's own.

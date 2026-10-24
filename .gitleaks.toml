@@ -1,0 +1,13 @@
+# gitleaks config: the default rules, plus an allowlist for the fake keys smoke.sh feeds the secret guard on purpose.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "secret-guard test fixtures (not real keys)"
+regexes = ['''AKIAABCDEFGHIJKLMNOP''', '''wrong-token''', '''ghp_abcdefghijklmnopqrstuvwxyz0123456789''', '''sk-abcdefghijklmnopqrstuvwxyz0123456''',
+  # the redaction checks' samples (smoke.sh, client/redact.ts tests)
+  '''sk_live_51Habcdef[G]HIJKLMNOPqrstuvWXyz0123''', '''rk_test_51Habcdef[G]HIJKLMNOPqrstu''', '''glpat-abcdefghij0123456789''', '''hooks\.slack\.com/services/T00000000/B00000000/X{24}''', '''Xk29fjs8dk3LmQp0aZ''',
+  # Exact synthetic Better Auth secret in client/devlog.test.ts (including its historical commits).
+  '''aB3dE5fG7hJ9kL1mN2pQ4rS6''',
+  # a code comment in src/devices.ts that the generic-api-key rule misreads
+  '''Argon2id-wrapped''']

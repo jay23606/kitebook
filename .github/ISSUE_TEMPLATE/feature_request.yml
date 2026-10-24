@@ -1,0 +1,20 @@
+name: Feature request
+description: An idea or a missing piece
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: The problem, description: "What are you trying to do, and what gets in the way today?" }
+    validations: { required: true }
+  - type: textarea
+    id: idea
+    attributes: { label: What you'd like, description: "The behaviour you want. Name the op, flag, or page it touches if you know." }
+    validations: { required: true }
+  - type: textarea
+    id: safety
+    attributes: { label: Safety, description: "Does it change what an agent can do without the owner's approval, or what the server can see? (Kitebook's rule: the server never runs code and never holds agent secrets.)" }
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing
+      options: [{ label: "I'd like to build this myself" }]
