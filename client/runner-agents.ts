@@ -7,6 +7,7 @@ import { homedir } from "os";
 import { PRESETS } from "./setup.ts";
 import { ADAPTERS, isAdapter, build, probeHelp, listed, taskUuid, type Built } from "./agent-adapters.ts";
 import { log, sh, cfg, me } from "./runner-ctx.ts";
+import { ModelDiscovery, parseModels, type Catalog } from "./agent-models.ts";
 import * as PL from "./platform.ts";
 
 // Owner preferences for agent/model choice: bun runner.ts set runner.json prefs.<key> <value>   ("-" removes a key)
@@ -26,7 +27,7 @@ export let PI_HELP = ""; // `pi --help` as probed at startup: Pi 1.x lists --no-
 export const piHas = (flag: string) => !!PI_HELP && listed(PI_HELP, flag);
 export const MODEL_FLAG: Record<string, string> = { pi: "--model" }; // inserted right before the prompt (adapters carry their own modelFlag)
 export const PROBE: Record<string, string[]> = { pi: ["pi", "--list-models"], opencode: ["opencode", "models"] }; // asked non-interactively at startup
-// No non-interactive list command: documented aliases (claude --model) / known ids (codex -m). Extend with runner.json "models": {"codex": [...]}.
+// Unverified aliases/legacy ids when native discovery is unavailable. Never use these as dispatch restrictions.
 export const STATIC_MODELS: Record<string, string[]> = { claude: ["sonnet", "opus", "haiku"], codex: ["gpt-5.5", "gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini", "gpt-5"],
   gemini: ["auto", "pro", "flash", "flash-lite"] }; // gemini: its documented --model aliases
 // The more-agents adapters (client/agent-adapters.ts), built from each installed CLI's --help at startup (probeModels). Not installed or
@@ -44,43 +45,35 @@ export const eventsOf = (d: AgentDef | null) => d?.events ?? (d?.json ? "pi" : n
 export const resumes = (name: string, sid?: string | null) => { const d = agentDef(name); if (!d) return false;
   return d.argv.some(a => a.includes("{session}")) || (!!d.resume && (!d.resume.some(x => x.includes("{sid}")) || !!sid)); };
 // An adapter without a model list (Cursor, Copilot, Grok: no list command that works without a login) takes an explicit model as given;
-// the CLI itself says if it doesn't know it. Listed agents keep the strict check.
+// the CLI itself says if it doesn't know it. Only an explicitly configured catalog or successful owner listModels command imposes a membership check.
 export const modelPassThrough = (agent: string) => isAdapter(agent) && !cfg.agents?.[agent] && !(MODELS[agent] ?? []).length;
 export const agentArgv = (name: string) => agentDef(name)?.argv ?? null;
 export const agentNames = () => [...new Set([...Object.keys(PRESETS), ...Object.keys(cfg.agents ?? {})])];
 export let MODELS: Record<string, string[]> = {};
 // pi prints a table "provider  model  context ..." -> "provider/model"; a plain list prints one id per line.
-export function parseModelList(text: string) {
-  const out: string[] = [];
-  for (const line of text.split("\n")) { const c = line.trim().split(/\s+/);
-    if (!c[0] || /^(provider|model|name|id)$/i.test(c[0]) || !/^[\w.:/@-]+$/.test(c[0]) || /:$/.test(c[0])) continue;
-    if (c.length === 1) out.push(c[0]); else if (/^[\w.-]+$/.test(c[0]) && /^[\w.:/@-]+$/.test(c[1]) && !/^\d/.test(c[1])) out.push(`${c[0]}/${c[1]}`); }
-  return [...new Set(out)];
+export const parseModelList = parseModels;
+export const MODEL_CATALOGS: Record<string, Catalog> = {};
+const discovery = new ModelDiscovery();
+export async function discoverModels(agent?: string, refresh = false) {
+  const names = agentNames(); if (agent && !names.includes(agent)) throw new Error(`unknown agent ${agent}`);
+  await Promise.all((agent ? [agent] : names).map(async n => { const d = agentDef(n), extra = Array.isArray(cfg.models) ? (n === (cfg.defaultAgent ?? "pi") ? cfg.models : []) : cfg.models?.[n] ?? [];
+    const c = await discovery.get({ agent: n, command: d?.listModels ?? PROBE[n], restrict: !!d?.listModels, configured: d?.models, extra, fallback: STATIC_MODELS[n], codex: n === "codex" && !cfg.agents?.[n], env: agentEnv(), cwd: process.cwd() }, refresh);
+    MODEL_CATALOGS[n] = c; MODELS[n] = c.models.map(x => x.id);
+  }));
+  return { catalogs: (agent ? [agent] : names).map(n => ({ ...MODEL_CATALOGS[n], configured_default: n === (cfg.prefs?.defaultAgent ?? cfg.defaultAgent ?? "pi") ? cfg.prefs?.defaultModel ?? null : null })), checked_at: new Date().toISOString(), note: "Catalog discovery does not verify account entitlement. Session model evidence is separate (session_status)." };
 }
 export async function probeModels() {
-  const res: Record<string, string[]> = {};
   const help = await probeHelp(b => Bun.which(b, { PATH: agentEnv().PATH }), agentEnv()); // the adapters' --help: which flags this install has
   for (const n of Object.keys(ADAPTERS)) { if (help[n] == null) { delete BUILT[n]; continue; } BUILT[n] = build(n, help[n]);
     const b = BUILT[n]; log(`agent ${n}:`, b.issue ? b.issue : [b.events ? "events" : "plain text", b.resume ? "resumes its session" : "no resume", b.askReadOnly ? "read-only quick asks" : "quick asks behind the git check"].join(", ")); }
-  await Promise.all(agentNames().map(async n => {
-    const d = agentDef(n), cmd = d?.listModels ?? PROBE[n]; let list: string[] = [];
-    if (Array.isArray(d?.models)) list = d!.models!;
-    else if (cmd && Bun.which(cmd[0])) try {
-      const p = PL.spawn(cmd, { stdout: "pipe", stderr: "pipe", env: agentEnv() }); const kill = setTimeout(() => p.kill(), 15000);
-      const [o, e] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); clearTimeout(kill);
-      list = parseModelList(o + "\n" + e); // pi writes the table to stderr
-    } catch {}
-    if (!list.length) list = STATIC_MODELS[n] ?? [];
-    const extra = Array.isArray(cfg.models) ? (n === (cfg.defaultAgent ?? "pi") ? cfg.models : []) : cfg.models?.[n] ?? [];
-    res[n] = [...new Set([...list, ...extra])];
-  }));
+  await discoverModels();
   await Promise.all(Object.keys(JSON_PROBE).filter(n => !cfg.agents?.[n] && Bun.which(JSON_PROBE[n][0])).map(async n => { try {
     const p = PL.spawn(JSON_PROBE[n], { stdout: "pipe", stderr: "pipe", env: agentEnv() }); const kill = setTimeout(() => p.kill(), 15000);
     const [o, e] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); clearTimeout(kill);
     if (n === "pi") PI_HELP = o + "\n" + e;
     if (/--mode\b[^\n]*json/.test(o + e)) JSON_OK.add(n); } catch {} }));
   if (JSON_OK.size) log("json event mode:", [...JSON_OK].join(" "));
-  MODELS = res; log("models:", Object.entries(MODELS).map(([k, v]) => `${k}=${v.length}`).join(" "));
+  log("models:", Object.entries(MODELS).map(([k, v]) => `${k}=${v.length}`).join(" "));
 }
 // "claude-sonnet-4-5" matches an advertised "anthropic/claude-sonnet-4-5"; a ":high" thinking suffix is allowed.
 export const modelOk = (list: string[], m: string) => { const base = m.replace(/:[a-z]+$/, ""); return list.some(x => x === m || x === base || x.endsWith("/" + base)); };
@@ -99,7 +92,7 @@ export function checkPick(agent: string, model: string | null): string | null {
   if (!d) return `agent "${agent}" is not available on ${me.name}; agents: ${agentNames().join(", ")}`;
   if (d.issue) return `agent "${agent}" can't run tasks on ${me.name}: ${d.issue}`;
   if (model && modelPassThrough(agent)) log(`model "${model}" for ${agent}: it advertises no model list here, so the model is passed through unchecked`);
-  else if (model) { const list = MODELS[agent] ?? [];
+  else if (model && MODEL_CATALOGS[agent]?.authoritative) { const list = MODELS[agent] ?? [];
     if (!list.length) return `model "${model}" can't be used: ${agent} advertises no models on ${me.name}; omit model to use its default`;
     if (!modelOk(list, model)) return `model "${model}" is not available for ${agent} on ${me.name}; models: ${list.join(", ")}`; }
   if (!pickAllowed(agent, model)) return `${agent}${model ? "/" + model : ""} is not allowed by the owner of ${me.name}; ${allowedNote()}`;
@@ -116,7 +109,7 @@ export function resolvePick(t: any, proj: any): Pick | string {
   for (const [reason, r] of rules) { if (!r || (!r.agent && !r.model)) continue;
     const agent = r.agent ?? base, model = r.model ?? null, bad = checkPick(agent, model);
     if (!bad) return { agent, model, reason }; log(`prefs.${reason === "project" ? "byProject" : "byKind"} skipped:`, bad); }
-  const dm = P.defaultModel && (modelOk(MODELS[base] ?? [], P.defaultModel) || modelPassThrough(base)) ? P.defaultModel : null;
+  const dm = P.defaultModel && (!MODEL_CATALOGS[base]?.authoritative || modelOk(MODELS[base] ?? [], P.defaultModel) || modelPassThrough(base)) ? P.defaultModel : null;
   for (const model of dm ? [dm, null] : [null]) if (!checkPick(base, model)) return { agent: base, model, reason: "default" };
   return checkPick(base, null) ?? `no allowed agent for this task on ${me.name}; ${allowedNote()}`;
 }

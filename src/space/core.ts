@@ -161,6 +161,8 @@ export class SpaceCore extends DurableObject<Env> {
 
   // One alarm, multiplexed: next fire = the soonest of lease expiry, subscription expiry and the next due outbox delivery.
   async armAlarm(at: number) {
+    if (!Number.isFinite(at)) return;
+    at = Math.max(at, Date.now() + 1000); // overdue/poisoned work can never spin an immediate alarm loop
     const cur = await this.ctx.storage.getAlarm();
     if (cur === null || cur > at) await this.ctx.storage.setAlarm(at);
   }

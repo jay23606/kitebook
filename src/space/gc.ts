@@ -142,7 +142,7 @@ export class SpaceGc extends SpaceCore {
         await this.store.unref(sha, this.refKey);
         if (held(sha)) { await this.store.ref(sha, this.refKey); continue; } // re-used while we awaited: keep it
         if ((await this.store.refs(sha)) === 0) { await this.store.del(sha); deleted++; if (orphan.has(sha)) { freed += orphan.get(sha)!; swept++; } } // another space still marks it: theirs now
-      } catch (e) { console.error("blob gc", sha, e); this.sql.exec("insert or replace into blob_put values(?,0,?)", sha, orphan.get(sha) ?? 0); } // retried next run
+      } catch (e) { console.error("blob gc", sha, e); this.sql.exec("insert or replace into blob_put values(?,?,?)", sha, Date.now() - this.gcGraceMs() + 60_000, orphan.get(sha) ?? 0); } // persist a retry deadline >= 1 minute away, even with zero grace; timestamp + grace = deadline
       finally { this.sweeping.delete(sha); done(); }
     }
     const m = (k: string) => Number(this.sql.exec("select v from meta where k=?", k).toArray()[0]?.v ?? 0); // bytes freed: rows swept + orphan uploads deleted

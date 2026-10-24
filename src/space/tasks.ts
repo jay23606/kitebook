@@ -377,7 +377,7 @@ export class SpaceTasks extends SpaceFiles {
     if (a.agent != null && agents.length && !agents.includes(a.agent)) throw new RelayError(400, `agent "${a.agent}" is not available on ${target}; agents: ${agents.join(", ")}`);
     const agent = a.agent ?? ad.projects?.[a.project]?.agent ?? ad.default_agent;
     const models: string[] = Array.isArray(ad.models?.[agent]) ? ad.models[agent] : [];
-    if (a.model != null && models.length && !modelOk(models, String(a.model))) throw new RelayError(400, `model "${a.model}" is not available for ${agent} on ${target}; models: ${models.join(", ")}`);
+    if (a.model != null && (ad.model_catalogs?.[agent]?.authoritative ?? !!models.length) && !modelOk(models, String(a.model))) throw new RelayError(400, `model "${a.model}" is not available for ${agent} on ${target}; models: ${models.join(", ")}`);
     const pf = ad.prefs ?? {}; // the machine owner's allow/deny rules (the runner enforces them too)
     if (a.agent != null && !pickAllowed(pf, agent, a.model ?? null)) throw new RelayError(400, `${agent}${a.model ? "/" + a.model : ""} is not allowed by ${target}'s owner; allowed: ${(pf.allow ?? []).join(", ") || "anything"}${pf.deny?.length ? ` except ${pf.deny.join(", ")}` : ""}`);
   }

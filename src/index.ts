@@ -26,7 +26,7 @@ import { SERVER_BUILD } from "./build.ts";
 import { ingressOf, edgeGate, queryToken, QUERY_TOKEN_HINT } from "./ingress.ts";
 import { Space } from "./space.ts";
 import { ACCT_RE, spaceStub, dirStub, acctOf, type Cap, json, b64url, Dir } from "./dir.ts";
-import { type EvCall, serverInfo, mcp, mcpNameMismatch } from "./mcp.ts";
+import { type EvCall, serverInfo, mcp, mcpNameMismatch, mcpStatus, mcpBaseRevision } from "./mcp.ts";
 import * as DL from "./devlog.ts";
 export { Space, Dir, serverInfo };
 
@@ -79,7 +79,8 @@ async function front(req0: Request, env: Env, reqId: string): Promise<Response> 
     const req = publicRequest(req0), url = new URL(req.url);
     // ?build=1 from this computer only (the local listener, src/ingress.ts): which commit the server runs, so an update can tell the server
     // took the new code (client/host-upgrade.ts serverSync). Plain /health, and anything through the edge, stays {ok:true} (no version to the world).
-    if (url.pathname === "/health") return json(url.searchParams.has("build") && ingressOf(req0, env) === "local" ? { ok: true, commit: SERVER_BUILD.commit } : { ok: true });
+    if (url.pathname === "/health") { const local = ingressOf(req0, env) === "local", r = json(url.searchParams.has("build") && local ? { ok: true, commit: SERVER_BUILD.commit } : { ok: true });
+      if (local) { r.headers.set("x-kitebook-build", SERVER_BUILD.commit ?? "unknown"); r.headers.set("x-kitebook-mcp-revision", await mcpBaseRevision()); r.headers.set("cache-control", "no-store"); } return r; }
     // ingress lockdown (src/ingress.ts): from the public edge, only what apps and the OAuth dance need; the rest is 404 without the
     // owner's session. Which listener it came in on is the listener's own stamp, never Host or X-Forwarded-* (they can only downgrade).
     const edge = ingressOf(req0, env) === "edge";
@@ -197,6 +198,9 @@ async function front(req0: Request, env: Env, reqId: string): Promise<Response> 
     const call = async (op: string, args: any = {}): Promise<Res> => {
       // can: what this connection may do, in plain words, so an agent can tell its human exactly what was approved
       if (op === "whoami") return { ok: true, result: { ...peer, account: acct, spaces: caps, can: caps.map(c => grantSummary(peer.name, c.verbs, c.paths)).join(" ") } };
+      if (op === "mcp_status") { try { const spaces = args.space ? [spaceFor(args.space)] : caps.map(c => c.space).slice(0, 5);
+        for (const s of spaces) { const r = await call("describe", { space: s }); if (!r.ok) return r; }
+        return { ok: true, result: await mcpStatus(args, call) }; } catch (e: any) { if (Array.isArray(e)) return { ok: false, status: e[0], error: e[1] }; throw e; } }
       // "Approve on my phone / Mac" for a new app connection (src/oauth.ts connectNew): only a runner of the request's workspace reads
       // it (connect_get: the code, the app, what it would get) and passes on the owner's answer (connect_decide, bound to its nonce)
       // `kitebook open` on the owner's Mac: the runner (which refuses a request from its own agents) asks for a single-use 5-minute sign-in

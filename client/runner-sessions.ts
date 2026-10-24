@@ -11,11 +11,11 @@
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
 import { realpathSync } from "fs";
 import { createHash } from "crypto";
-import { cfg, cfgNow, call, log, me } from "./runner-ctx.ts";
+import { cfg, cfgNow, call, log, me, on } from "./runner-ctx.ts";
 import * as P from "./policy.ts";
 import * as SS from "./sessions-store.ts";
 import { audit } from "./runner-approval.ts";
-import { agentDef } from "./runner-agents.ts";
+import { agentDef, discoverModels } from "./runner-agents.ts";
 import { liveFor } from "./live-driver.ts"; // session_send forks through the agent's own live driver when it can
 
 const opts = (): SS.Opts => (process.env.KITEBOOK_SESSIONS_HOME ? { home: process.env.KITEBOOK_SESSIONS_HOME } : {});
@@ -44,14 +44,16 @@ export async function onRequest(id: string) {
   try {
     let q: any; try { q = await call("sessions_take", { id }); } catch { return; } // expired, or not ours
     const reply = (ok: boolean, x: any) => call("sessions_reply", ok ? { id, ok: true, result: x } : { id, ok: false, error: String(x) }).catch(e => log("sessions reply", e.message));
-    const a = await allowed(q.from);
+    if (q.op === "models") { try { const r = await discoverModels(q.args?.agent ?? undefined, true); await reply(true, r); await on.advertise(); } catch (e: any) { await reply(false, e.message); } return; }
+    const a = await hooks.allowed(q.from);
     if (a.level === "off") { audit({ type: "sessions_refused", from: q.from, op: q.op, why: a.why }); log(`sessions ${q.op} from ${q.from}: refused (${a.why})`); return reply(false, `refused: ${a.why}`); }
     try {
-      const r = q.op === "search" ? await SS.search(q.args ?? {}, opts()) : q.op === "get" ? await SS.get(q.args, opts()) : null;
+      const r = q.op === "search" ? await SS.search(q.args ?? {}, opts()) : q.op === "get" ? await SS.get(q.args, opts()) : q.op === "status" ? await SS.status(q.args, opts()) : null;
       if (!r) return reply(false, `unknown request ${q.op}`);
-      const n = "sessions" in r ? r.sessions.length : r.messages.length;
+      if ((await hooks.allowed(q.from)).level === "off") return reply(false, "refused: session access ended while reading");
+      const n = "sessions" in r ? r.sessions.length : "messages" in r ? r.messages.length : 1;
       audit({ type: "sessions_read", from: q.from, op: q.op, agent: q.args?.agent ?? null, id: q.args?.id ?? null, n });
-      log(`sessions ${q.op} from ${q.from}: ${"sessions" in r ? `${n} session(s)` : `${n} message(s) of ${q.args.agent} ${q.args.id}`}`);
+      log(`sessions ${q.op} from ${q.from}: ${"sessions" in r ? `${n} session(s)` : `${q.op === "status" ? "metadata" : `${n} message(s)`} of ${q.args.agent} ${q.args.id}`}`);
       return reply(true, r);
     } catch (e: any) { return reply(false, e?.message ?? String(e)); }
   } finally { busy.delete(id); }

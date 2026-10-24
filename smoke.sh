@@ -370,14 +370,15 @@ RONLY='["policy","settings_report","code_report","task_live","task_approval","ap
 mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-a.json; mc $MAC '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-r.json
 TGT=$(bun client/admin.ts peer tgt assistant 2>/dev/null); bun client/admin.ts grant tgt main read "shared/**" >/dev/null; mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t0.json
 TGTID=$(h task_create --target tgt --title "for tgt" --instructions "x" | jq -r .id); mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t1.json; h task_cancel --id $TGTID >/dev/null 2>&1 || true
-jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 33 and ($n|length) >= 25 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
-  and (["describe","presence","task_create","ask","ask_get","task_steer","task_answer","inbox","ack","task_get","kb_search","relay_update","status"]|all(. as $x|$n|index($x)))
+jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 35 and ($n|length) >= 25 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
+  and (["agent_models","mcp_status","describe","presence","task_create","ask","ask_get","task_steer","task_answer","inbox","ack","task_get","kb_search","relay_update","status"]|all(. as $x|$n|index($x)))
   and ($n|index("check")|not) and ($n|index("changes")|not) and ($n|index("cancel_all")|not)' $T/tl-a.json >/dev/null \
   && jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) > 50 and ([$ro[]|select(. != "has")|select(. as $x|$n|index($x)|not)]|length==0)' $T/tl-r.json >/dev/null \
   && jq -e '[.result.tools[].name] | (index("task_complete")|not) and (index("task_claim")|not)' $T/tl-t0.json >/dev/null && jq -e '[.result.tools[].name] | index("task_claim") and index("task_progress") and index("task_complete")' $T/tl-t1.json >/dev/null \
   && jq -e '.result.tools[]|select(.name=="policy" or .name=="dev_mode")|.annotations.readOnlyHint' $T/tl-r.json >/dev/null \
   && mc $HARK '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"changes","arguments":{"since":0}}}' | jq -e '.result.isError|not' >/dev/null \
  \
+  && mc $HARK '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mcp_status","arguments":{}}}' | jq -e '.result.structuredContent | .reload_required and .applied==false and (.tool_revision|test("^[a-f0-9]{64}$")) and (.tools|index("agent_models"))' >/dev/null \
   || { jq -c '[.result.tools[].name]' $T/tl-a.json $T/tl-t0.json $T/tl-t1.json; die "mcp tools by caller"; }
 mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.instructions | test("Start here: describe") and test("ask \\{question\\}") and test("task_steer") and test("after its current run finishes") and test("task_answer") and test("presence") and test("inbox on a schedule") and test("Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI") and (test("ONE call")|not) and (test("changes\\(since\\)")|not)' >/dev/null \
   && mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '(.result.tools[]|select(.name=="task_steer")|.description|test("after the agent.s current run finishes")) and (.result.tools[]|select(.name=="inbox")|.description|test("^The polling call")) and (.result.tools[]|select(.name=="describe")|.description|test("^Start here"))' >/dev/null \
@@ -930,7 +931,7 @@ cat > $T/fleet.json <<FJ
 FJ
 KITEBOOK_TEST=1 HOME=$T PATH="$T/fakepi:$PATH" bun client/runner.ts $T/fleet.json > $T/fleet.log 2>&1 & RF=$!
 for i in $(seq 1 20); do h cat shared/runners/fleet.json 2>/dev/null | jq -e '.models.mdl' >/dev/null 2>&1 && break; sleep 0.5; done
-h cat shared/runners/fleet.json | jq -e '.models.mdl==["fast-1","smart-2"] and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
+h cat shared/runners/fleet.json | jq -e '.models.mdl==["fast-1","smart-2"] and .model_catalogs.mdl.authoritative and .model_catalogs.mdl.source=="native" and (.model_catalogs.claude.authoritative|not) and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
 h task_create --target fleet --title x --instructions y --project pa --agent mdl --model nope 2>&1 | grep -q "models: fast-1, smart-2" || die "bad model"
 h task_create --target fleet --title x --instructions y --project pa --agent nope 2>&1 | grep -q "agents: pi, codex, claude" || die "bad agent"
 MD=$(h task_create --target fleet --title "model pick" --instructions "say args" --project pa --agent mdl --model smart-2 | jq -r .id)
@@ -1006,7 +1007,8 @@ pk "default" --project pa; [ "$RES" = '["par",null,"default"]' ] && h task_get $
 h describe | jq -e '(.runners[]|select(.name=="fleet")|.online and .spec.version==2 and (.projects.ps.verify|index("test -f spec_ok.txt")) and (.agents|index("sp")) and .max_parallel==3 and has("hours")) and .task_spec.version==2 and (.task_spec.modes==["plan","execute"]) and (.peers|map(.name)|index("hark"))' >/dev/null && pass "describe: capability manifest (runners: online, agents, projects + verify cmds, spec support; task spec schema)" || { h describe; die "describe"; }
 # frictions: which code runs where, for signed-in callers only: describe.server (baked in at build) and each runner's build; /health unchanged
 HC=$(git rev-parse HEAD); h describe | jq -e --arg c "$HC" '(.server|.commit==$c and (.version|test("^(main|dev|local)-[0-9.]+-[0-9a-f]{7}$|^v[0-9]")) and (.channel|test("^(main|dev|local)$")) and (.built_at|length>0))
-  and (.runners[]|select(.name=="fleet")|.build|.commit==$c and .channel==(.version|split("-")[0]) and (.branch|length>0))' >/dev/null && [ "$(curl -s $KITEBOOK_URL/health)" = '{"ok":true}' ] \
+  and (.runners[]|select(.name=="fleet")|.build|.commit==$c and (.channel|test("^(main|dev|local)$")) and (.branch|length>0))' >/dev/null && [ "$(curl -s $KITEBOOK_URL/health)" = '{"ok":true}' ] \
+  && curl -sD $T/hheaders -o /dev/null $KITEBOOK_URL/health && grep -qi '^x-kitebook-mcp-revision: [0-9a-f]' $T/hheaders \
   && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $KITEBOOK_URL/v1/describe -d '{"space":"main"}')" = 401 ] \
  || { h describe | jq '{server, b: [.runners[]|{name, build}]}'; curl -s $KITEBOOK_URL/health; die "describe builds"; }
 curl -s -H "authorization: Bearer $HARK" "$KITEBOOK_URL/v1/describe?space=main" | jq -e '.ok' >/dev/null || die "describe GET"
@@ -2940,10 +2942,11 @@ sed 's#from *"cloudflare:workers"#from "data:text/javascript,export class Durabl
 # additions, ~8 KB gzip of runner text) put dev + phone-approve at 933.2 gzip, 3236 raw
 # 938 since hosted-prep (2026-10-23): the account model groundwork (src/account-store.ts users + audit + usage counters, src/identity.ts,
 # client/account.ts) puts dev + it at 935.5 gzip, 3243 raw (raw budget unchanged)
-BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 938) && echo "$BS" | jq -e '.raw_kb < 3260' >/dev/null \
+# 950 / raw 3300: model discovery adapter served to runners + session metadata, MCP revisions and cost guards (+~7 KB gzip).
+BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 950) && echo "$BS" | jq -e '.raw_kb < 3300' >/dev/null \
   && [ "$(bun -e "await import('$T/bundle-eval.mjs'); console.log(typeof Reflect.getMetadata)")" = undefined ] \
   && grep -q 'from *"cloudflare:workers"' $BJ && [ -z "$(ls .cloudflare/output/v0/workers/default/bundle/*.js | grep -v '/index.js$')" ] \
-  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 938; was 911 before the trim), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
+  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 950; includes model/session discovery and MCP revisions), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
 # fix-security P0: the Mac's production server (scripts/serve.sh, what mac-host.sh runs at login) is the built bundle on workerd, data outside the
 # project folder; it carries a cf dev Kitebook over (scripts/migrate-cfdev.ts: DO SQLite as is, simulated R2 -> blobs/<sha256> + refs, hashes checked)
 SVP=$((PORT + 65)); SURL=http://127.0.0.1:$SVP; PORT=$SVP KITEBOOK_DATA=$T/srv bash scripts/serve.sh > $T/serve.log 2>&1 & SVPID=$!
@@ -3081,15 +3084,15 @@ NR0=$(ls $WD/blobs/refs/$WSHA | wc -l); KITEBOOK_URL=$WURL bun client/admin.ts g
 [ -f $WD/blobs/$WSHA ] && [ "$NR0" -ge 2 ] && [ "$NR1" = $((NR0 - 1)) ] && wread shared/big.txt | jq -e '.result.content|length==390000' >/dev/null \
   && pass "blob GC across spaces: an object another space still references is never deleted (per-space markers)" || { echo "$NR0 $NR1"; ls -R $WD/blobs/refs | head; die "cross-space gc"; }
 kill $WPID 2>/dev/null; WPID=
-# retention: Kitebook keeps live state only. Finished tasks + their files/events age out; orphan blobs are GC'd; active tasks and shared/ stay
+# retention: finished tasks + their files/events age out; active tasks and durable shared knowledge stay
 bun client/admin.ts retention main | jq -e '.days==30' >/dev/null && bun client/admin.ts retention main 7 | jq -e '.days==7 and .next_run' >/dev/null && h describe | jq -e '.retention_days==7' >/dev/null || die "retention config"
-echo "# kb entry" | h put kb/smoke-keep.md >/dev/null; DSHA=$(h stat tasks/$ID/diff.patch | jq -r .sha); KEEP=$(h task_create --target idle --title "still open" --instructions y | jq -r .id)
+echo "# kb entry" | h put kb/smoke-keep.md >/dev/null; echo "# context entry" | h put context/smoke-keep.md >/dev/null; DSHA=$(h stat tasks/$ID/diff.patch | jq -r .sha); KEEP=$(h task_create --target idle --title "still open" --instructions y | jq -r .id)
 bun client/admin.ts prune main 3600 | jq -e '.tasks==0' >/dev/null && h task_get $ID | jq -e '.state=="succeeded"' >/dev/null || die "prune window"
 PR=$(bun client/admin.ts prune main 0); echo "$PR" | jq -e '.tasks>=3 and .blobs>=1 and .events>=1' >/dev/null || die "prune: $PR"
 h task_get $ID 2>&1 | grep -q "no such task" && ! h stat tasks/$ID/summary.md >/dev/null 2>&1 && curl -s -X POST $KITEBOOK_URL/v1/has -H "authorization: Bearer $HARK" -H "content-type: application/json" -d "{\"space\":\"main\",\"shas\":[\"$DSHA\"]}" | jq -e '.result.missing|length==1' >/dev/null \
  || { h task_get $ID 2>&1 | head -3; h stat tasks/$ID/summary.md 2>&1 | head -3; curl -s -X POST $KITEBOOK_URL/v1/has -H "authorization: Bearer $HARK" -H "content-type: application/json" -d "{\"space\":\"main\",\"shas\":[\"$DSHA\"]}"; echo; h grep "" --path "**" 2>/dev/null | head -0; die "prune effect"; }
 h task_get $KEEP | jq -e '.state=="queued"' >/dev/null && h cat tasks/$KEEP/task.md | grep -q "still open" && h cat shared/spec.md | grep -q Spec && h log | jq -e '.commits|length>=1' >/dev/null && echo "after prune" | h put shared/after.md >/dev/null \
-  && h cat kb/smoke-keep.md | grep -q "kb entry" && h cat context/hp.md | grep -q "Learned in" && pass "active task, shared/, kb/ and context/ files and history survive; writes still work" || die "prune kept"
+  && h cat kb/smoke-keep.md | grep -q "kb entry" && h cat context/smoke-keep.md | grep -q "context entry" && pass "active task, shared/, kb/ and context/ files and history survive; writes still work" || die "prune kept"
 bun client/admin.ts retention main 30 >/dev/null
 # ---- blob GC + repos/** current tree (arch-2 leftovers): mark-and-sweep with a grace, R2 orphans, bounded repos history, KB untouched ----
 bun client/admin.ts retention main - - 1 3600 | jq -e '.repos_history==1 and .gc_grace_sec==3600' >/dev/null || die "gc config"
@@ -3111,7 +3114,7 @@ G2=$(bun client/admin.ts gc main 0); OBJ1=$(bun client/admin.ts gc_store | jq .o
 echo "$G2" | jq -e '.swept>=3 and .external_deleted>=1 and .freed_bytes>=450000 and .usage.freed_bytes>0' >/dev/null && [ "$OBJ1" -lt "$OBJ0" ] && bun client/admin.ts gc_store | jq -e '.unmarked==0' >/dev/null \
   && curl -s -X POST $KITEBOOK_URL/v1/has -H "authorization: Bearer $HARK" -H content-type:application/json -d "{\"space\":\"main\",\"shas\":[\"$RV1\"]}" | jq -e '.result.missing|length==1' >/dev/null \
  || { echo "$G2 $OBJ0 $OBJ1"; die "gc sweep"; }
-h cat shared/gc/keep.txt | grep -c "keep line" | grep -q 30000 && h cat kb/gc-big.md | grep -q "big kb note" && h cat kb/gc-hist.md | grep -q v3 && [ "$(h log --path kb/gc-hist.md | jq '.commits|length')" = 3 ] && h cat context/hp.md | grep -q "Learned in" && h kb_search --query "kb fact line" | jq -e '.results|length>=1' >/dev/null \
+h cat shared/gc/keep.txt | grep -c "keep line" | grep -q 30000 && h cat kb/gc-big.md | grep -q "big kb note" && h cat kb/gc-hist.md | grep -q v3 && [ "$(h log --path kb/gc-hist.md | jq '.commits|length')" = 3 ] && h cat context/smoke-keep.md | grep -q "context entry" && h kb_search --query "kb fact line" | jq -e '.results|length>=1' >/dev/null \
  || die "gc kept"
 bun client/admin.ts usage | jq -e '.gc.main.freed_bytes>0 and .gc.main.freed_blobs>=3 and .gc.main.last_run' >/dev/null && pass "admin usage shows bytes freed by blob GC per space" || { bun client/admin.ts usage; die "gc usage"; }
 bun client/admin.ts retention main - - 10 86400 >/dev/null
@@ -4033,7 +4036,7 @@ sv $SA describe | jq -e '.result.sessions.allowed=="off" and .result.sessions.to
  || { cat $T/s0.json; tail -20 $T/sessrun.log; die "sessions off"; }
 [ "$(cat $T/ssp.code)" = 200 ] && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"read"}')" = 200 ] && jq -e '.result.summary=="shark can search and read your agent sessions on your computers"' $T/ssp.out >/dev/null \
   && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"everything"}')" = 400 ] && grep -q "sessions must be off | read | write" $T/ssp.out \
-  && sv $SA describe | jq -e '.result.sessions.allowed=="read"' >/dev/null && smcp $SA '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name]|(index("sessions_search")!=null and index("session_get")!=null and index("session_create")==null)' >/dev/null \
+  && sv $SA describe | jq -e '.result.sessions.allowed=="read"' >/dev/null && smcp $SA '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name]|(index("sessions_search")!=null and index("session_get")!=null and index("session_status")!=null and index("session_create")==null)' >/dev/null \
   && curl -s -b $SJ $KITEBOOK_URL/settings | grep -q 'Your agent sessions' \
  || { cat $T/ssp.out; die "sessions grant"; }
 sv $SA sessions_search '{"query":"webhook"}' > $T/s1.json; sv $SA sessions_search '{"agent":"claude"}' > $T/s2.json; sv $SA sessions_search '{"cwd":"'$SRP'","limit":50}' > $T/s3.json
@@ -4041,6 +4044,7 @@ jq -e '.ok and .result.computer=="smac" and (.result.sessions|map(.id)|sort)==["
   && jq -e '.result.sessions|length==1 and .[0].id=="cl-own-1" and .[0].title=="Dark mode"' $T/s2.json >/dev/null && jq -e '.result.sessions|length==4' $T/s3.json >/dev/null \
   && ! grep -q "$SGH" $T/s1.json $T/s3.json && ! grep -q '\.pi/agent' $T/s1.json && grep -q "sessions search from shark: 2 session(s)" $T/sessrun.log \
   && sv $SA session_get '{"agent":"pi","id":"pi-own-1","last":5}' > $T/s4.json && jq -e '.result.messages|length==2 and .[1].role=="assistant" and (.[1].text|test("REDACTED"))' $T/s4.json >/dev/null && ! grep -q "$SGH" $T/s4.json \
+  && sv $SA session_status '{"agent":"pi","session_id":"pi-own-1"}' | jq -e '.ok and .result.id=="pi-own-1" and .result.model==null and .result.busy==null and (.result|has("messages")|not)' >/dev/null \
   && sv $SA session_get '{"agent":"pi","id":"nope"}' | jq -e '.ok==false and (.error|test("no pi session nope"))' >/dev/null \
  || { cat $T/s1.json $T/s2.json $T/s4.json; tail -20 $T/sessrun.log; die "sessions read"; }
 sv $SD sessions_search '{"query":"webhook"}' | jq -e '.ok==false and (.error|test("sdots may not read"))' >/dev/null && sv $SD changes '{"since":0,"limit":1000}' | jq -e '[.result.events[]|select(.type|startswith("sessions."))]|length==0' >/dev/null \
@@ -4226,7 +4230,7 @@ JU=""; for u in /start /settings /v1/whoami /mcp /llms.txt /api/auth/ok /join/st
 # the same server through its public edge (a tunnel or proxy, src/ingress.ts): unclaimed, everything but /health and /claim is the ingress 404,
 # byte for byte the body of an unknown path (no "unclaimed" fingerprint); /claim and the code-and-poll endpoints are on the edge allowlist
 curl -s $JCEU/no-such-route > $T/jue0.body; JUE=""; for u in /start /llms.txt /v1/whoami /mcp /open /join/inv_x.y /admin/claim_status; do c=$(curl -s -o $T/jue.body -w %{http_code} -X POST -H content-type:application/json -H "authorization: Bearer $KITEBOOK_ADMIN_TOKEN" -d '{}' $JCEU$u); { [ "$c" = 404 ] && cmp -s $T/jue.body $T/jue0.body; } || JUE="$JUE $u:$c"; done
-[ -z "$JUE" ] && curl -sf $JCEU/health >/dev/null && curl -s $JCEU/claim | jq -e '.result.claimed==false' >/dev/null && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $JCEU/claim/poll -H content-type:application/json -d '{"device_code":"kjd_x","sig":"x"}')" = 404 ] \
+[ -z "$JUE" ] && curl -sfD $T/edge-health.headers $JCEU/health >/dev/null && ! grep -qi '^x-kitebook-\(build\|mcp-revision\):' $T/edge-health.headers && curl -s $JCEU/claim | jq -e '.result.claimed==false' >/dev/null && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $JCEU/claim/poll -H content-type:application/json -d '{"device_code":"kjd_x","sig":"x"}')" = 404 ] \
   && curl -s -X POST $JCEU/claim/poll -H content-type:application/json -d '{"device_code":"kjd_x","sig":"x"}' | jq -e '.error=="no such request"' >/dev/null \
   && pass "unclaimed server behind a tunnel: its public edge answers the plain unknown-path 404 for everything (even /admin with the token) except /health, /claim and the claim polls" || { cat $T/jue.body; die "unclaimed edge:$JUE"; }
 # the claim: the laptop shows a code, the server shell shows the same one; a wrong code approves nothing

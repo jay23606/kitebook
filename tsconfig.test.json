@@ -2,5 +2,5 @@
 	// Unit tests of server code (client/presence.test.ts imports src/space/*): the server's own check plus Bun's test types.
 	"extends": "./tsconfig.json",
 	"compilerOptions": { "types": ["bun"] },
-	"include": ["src", "cloudflare.config.ts", ".cloudflare/types", "client/presence.test.ts", "client/devlog.test.ts", "client/device.test.ts", "client/join.test.ts", "client/frictions.test.ts", "client/ingress.test.ts", "client/password.test.ts", "client/connect-any-app.test.ts", "client/remote-presence.test.ts", "client/passkey.test.ts", "client/account-store.test.ts"]
+	"include": ["src", "cloudflare.config.ts", ".cloudflare/types", "client/presence.test.ts", "client/mcp-discovery.test.ts", "client/cost-guards.test.ts", "client/devlog.test.ts", "client/device.test.ts", "client/join.test.ts", "client/frictions.test.ts", "client/ingress.test.ts", "client/password.test.ts", "client/connect-any-app.test.ts", "client/remote-presence.test.ts", "client/passkey.test.ts", "client/account-store.test.ts"]
 }

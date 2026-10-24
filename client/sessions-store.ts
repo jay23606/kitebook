@@ -249,6 +249,29 @@ export async function get(q: { agent: string; id: string; last?: number }, o: Op
   return { id: m.id, agent: m.agent, title: clean(m.title), cwd: m.cwd, updatedAt: m.updatedAt, forkedFrom: m.forkedFrom ?? null, live: lv.live, live_why: lv.why, total: all.length,
     messages: all.slice(-n).map(x => ({ role: x.role, text: clean(x.text.length > LIMITS.msgChars ? x.text.slice(0, LIMITS.msgChars) + "…" : x.text), at: x.at ?? null, ...(x.text.length > LIMITS.msgChars ? { truncated: true } : {}) })) };
 }
+// Status is separate from get(): bounded metadata only, no transcript or search-index writes.
+export type SessionModel = { id: string; source: string; scope: string; at: number | null; verified_current: false };
+export async function status(q: { agent: string; id: string }, o: Opts = {}) {
+  const m = find(q.agent, q.id, o); if (!m) throw new Error(`no ${q.agent} session ${q.id} on this computer (sessions_search lists them)`);
+  const lv = await liveOf(m, o), now = o.now ?? Date.now(); let model: SessionModel | null = null;
+  const record = (id: any, source: string, at: any, scope = "last_recorded_turn") => { if (typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,199}$/.test(id) && clean(id) === id) model = { id, source, scope, at: ms(at), verified_current: false }; };
+  try {
+    if (m.agent === "opencode") { const db = openRo(roots(o).opencode); try { if (db) for (const row of (db.query("select data from message where session_id=? order by time_created desc limit 10").all(m.id) as any[]).reverse()) { const d = JSON.parse(row.data); record(d.modelID ? (d.providerID ? d.providerID + "/" : "") + d.modelID : null, "assistant_metadata", d.time?.created); } } finally { db?.close(); } }
+    else if (m.file) { const text = m.file.endsWith(".zst") ? unzst(m.file, m.size).slice(-LIMITS.tailBytes) : readRange(m.file, Math.max(0, m.size - LIMITS.tailBytes), Math.min(m.size, LIMITS.tailBytes));
+      if (m.agent === "gemini") { const d = JSON.parse(text); for (const x of d.messages ?? []) if (x.type === "gemini" || x.role === "model") record(x.model, "assistant_metadata", x.timestamp); }
+      else for (const x of lines(text)) {
+        if (m.agent === "codex" && x.type === "turn_context") record(x.payload?.model, "turn_context", x.timestamp, "recorded_turn_configuration");
+        if (m.agent === "pi" && x.type === "model_change") record(x.modelId ? (x.provider ? x.provider + "/" : "") + x.modelId : null, "model_change", x.timestamp, "recorded_session_selection");
+        if (m.agent === "claude" && x.type === "assistant") record(x.message?.model, "assistant_message", x.timestamp);
+        if (m.agent === "copilot" && x.type === "assistant.message") record(x.data?.model, "assistant_message", x.timestamp);
+        if (m.agent === "cursor" && (x.role === "assistant" || x.type === "assistant")) record(x.model ?? x.message?.model, "assistant_metadata", x.timestamp);
+      }
+    }
+  } catch {} // formats without model metadata stay unknown; no inference from a default/catalog
+  const state = lv.live === false ? "closed" : lv.live === null ? "unknown" : lv.why?.startsWith("written ") ? "recent_activity" : "open";
+  return { id: m.id, agent: m.agent, cwd: clean(m.cwd), updated_at: new Date(m.updatedAt).toISOString(), checked_at: new Date(now).toISOString(), activity: { state, evidence: lv.why }, busy: null, model: model as SessionModel | null,
+    note: "Observed local session metadata, not a running-task inventory. Recent writes do not establish that a turn is still running; recorded model metadata does not verify the current model." };
+}
 // A "context-transplant" fork for agents without a real fork (and the fallback for every agent): a summary of the owner's session seeded
 // into a NEW session. Read-only: the source file is only read. Redacted, capped at ~12 KB.
 export async function transplant(agent: string, id: string, o: Opts = {}, last = 12): Promise<{ text: string; meta: Meta }> {

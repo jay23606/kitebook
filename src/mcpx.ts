@@ -82,6 +82,7 @@ const TOOLS: Record<string, TM> = {
   kb_search: { title: "Search knowledge base", ro: 1, out: o({ query: str, results: arr, semantic: bool, embed_model: str, semantic_note: str, kb_version: num }, ["results", "semantic", "kb_version"]) },
   kb_get: { title: "Knowledge-base entry", ro: 1, out: o({ id: str, scope: str, kind: str, key: any, title: any, text: str, origin: any, source: str, updated: str, version: num, superseded_by: any, path: str, sha: any, kb_version: num }, ["id", "text"]) },
   kb_list: { title: "List knowledge base", ro: 1, out: o({ entries: arr, removed: arr, more: bool, cursor: num, kb_version: num }, ["entries", "cursor", "kb_version"]) },
+  agent_models: { title: "Discover agent models", ro: 1 }, mcp_status: { title: "Check MCP updates", ro: 1 }, session_status: { title: "Agent conversation status", ro: 1 },
   sessions_search: { title: "Search my agent sessions", ro: 1 }, session_get: { title: "Read an agent session", ro: 1 },
   session_create: { title: "Start an agent session", open: 1 }, session_send: { title: "Send to an agent session", open: 1 },
   status: { title: "Is Kitebook working? (runner health)", ro: 1, out: o({ ok: bool, verdict: str, next: any, checked_at: str, server: obj, runners: arr, pending_updates: arr, note: str }, ["ok", "verdict", "runners"]) },
@@ -98,9 +99,9 @@ const TOOLS: Record<string, TM> = {
 //   Experimental  relay_logs (recent logs/errors), ci_run, ci_status (local CI); off they answer needs_owner / nothing, so they aren't listed
 // brief_propose is listed so a connector UI can suggest a brief change; the brief itself arrives in initialize and describe, so the brief
 // tool stays unlisted (callable by name) to keep the list short.
-export const ASSISTANT_TOOLS = ["brief_propose", "describe", "presence", "peers", "whoami", "task_create", "ask", "ask_get", "ask_to_task", "task_promote", "task_get", "task_list", "task_status",
+export const ASSISTANT_TOOLS = ["agent_models", "mcp_status", "brief_propose", "describe", "presence", "peers", "whoami", "task_create", "ask", "ask_get", "ask_to_task", "task_promote", "task_get", "task_list", "task_status",
   "task_steer", "task_answer", "task_cancel", "task_message", "inbox", "ack", "notify", "change", "code_status", "ls", "read", "grep", "glob", "write", "patch", "kb_search", "kb_add", "kb_get", "relay_update", "status"];
-export const SESSION_TOOLS = { read: ["sessions_search", "session_get"], write: ["sessions_search", "session_get", "session_create", "session_send"] } as Record<string, string[]>; // listed once the owner allowed Agent sessions
+export const SESSION_TOOLS = { read: ["sessions_search", "session_get", "session_status"], write: ["sessions_search", "session_get", "session_status", "session_create", "session_send"] } as Record<string, string[]>; // listed once the owner allowed Agent sessions
 export const AGENT_TOOLS = ["presence_report"], TARGET_TOOLS = ["task_claim", "task_progress", "task_complete"], EXPERIMENTAL_TOOLS = ["relay_logs", "ci_run", "ci_status"]; // listed while Experimental is on (describe.experimental), when they answer
 export function toolsFor(kind: string, o: { target?: boolean; experimental?: boolean; sessions?: string } = {}) {
   const all = toolsList(); if (kind === "runner") return all.filter(t => !SESSION_TOOLS.write.includes(t.name)); // a Mac doesn't read its own owner's sessions through Kitebook

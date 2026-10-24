@@ -66,10 +66,10 @@ export class SpaceEvents extends SpaceGc {
     this.armAlarm(Date.now()).catch(() => {});
   }
   async outboxRun(): Promise<number | null> {
-    const rows = this.sql.exec("select * from outbox where next_at<=? order by id limit 200", Date.now()).toArray() as any[];
+    const rows = this.sql.exec("select * from outbox where next_at<=? order by id limit 32", Date.now()).toArray() as any[];
     const byTarget = new Map<string, any[]>(); for (const r of rows) { const k = r.kind + ":" + r.target; byTarget.set(k, [...(byTarget.get(k) ?? []), r]); }
     // In order per receiver, receivers in parallel.
-    await Promise.all([...byTarget.values()].map(async rs => { for (const r of rs) await this.outboxSend(r).catch(e => console.error("outbox", e)); }));
+    await Promise.all([...byTarget.values()].map(async rs => { for (const r of rs) await this.outboxSend(r).catch(e => { console.error("outbox", e); this.outboxResult(r, { ok: false, error: "delivery_exception" }); }); }));
     return (this.sql.exec("select min(next_at) t from outbox").one().t as number | null) ?? null;
   }
   async outboxSend(r: any) {
@@ -87,7 +87,12 @@ export class SpaceEvents extends SpaceGc {
       const occ = JSON.parse(r.body);
       res = await this.evPost(sub, occ.eventId, JSON.stringify({ ...occ, cursor: encCursor(this.spaceId, lower != null ? lower - 1 : r.seq) }));
     } else { const x = JSON.parse(r.extra); res = await this.evPost(x, x.wid, r.body); }
-    const tries = Number(r.attempts) + 1, max = r.kind === "term" ? 3 : this.evNum("OUTBOX_MAX_ATTEMPTS", 8);
+    this.outboxResult(r, res);
+  }
+  // Unexpected adapter/JSON failures consume the same finite budget as HTTP failures, including across eviction.
+  outboxResult(r: any, res: { ok: boolean; error?: string; final?: boolean }) {
+    const drop = () => { this.sql.exec("delete from outbox where id=?", r.id); };
+    const tries = (Number(r.attempts) || 0) + 1, max = r.kind === "term" ? 3 : Math.min(32, this.evNum("OUTBOX_MAX_ATTEMPTS", 8));
     if (res.ok || res.final || tries >= max) {
       drop();
       if (r.kind === "sub") {

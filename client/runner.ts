@@ -87,7 +87,7 @@ import * as S from "./sign.ts";
 import * as G from "./guard.ts";
 import * as PL from "./platform.ts";
 import { waysEnv, type Way, phoneApprove, dialogApprove, pageApprove, bound, audit, signedRuns, policyRuns, autorunRuns, policyAdvert, kbTrust, keepSignedKb, approvals, Unreachable, ChannelDown, approvalDown, approvalHealth, approve, connectAsk, repoProject, runPayload, approvedHash, rememberApproval, initApproval } from "./runner-approval.ts";
-import { PREF_KINDS, agentDef, agentNames, MODELS, probeModels, prefsView, type Pick, resolvePick, buildArgv, agentEnv, DEP_DIRS, cloneDeps, LEARN, noDeps, eventsOf, resumes, builtOf } from "./runner-agents.ts";
+import { PREF_KINDS, agentDef, agentNames, MODELS, MODEL_CATALOGS, probeModels, prefsView, type Pick, resolvePick, buildArgv, agentEnv, DEP_DIRS, cloneDeps, LEARN, noDeps, eventsOf, resumes, builtOf } from "./runner-agents.ts";
 import { ADAPTERS, parseEvent } from "./agent-adapters.ts";
 import * as AC from "./agents-connect.ts";
 import { originOf, projectForRepo, resolveBase, compareUrl, diffStat } from "./runner-git.ts";
@@ -321,7 +321,7 @@ async function advertise() {
   cfg.projects = discover(cfgNow() ?? JSON.parse(readFileSync(cfgPath, "utf8")));
   const remotes = Object.fromEntries(await Promise.all(Object.entries<any>(cfg.projects).map(async ([k, v]) => [k, await originOf(v)])));
   const body = { runner: me.name, projects: Object.fromEntries(Object.entries<any>(cfg.projects).map(([k, v]) => [k, { agent: v.agent, verify: v.verify ?? [], push: v.push ?? "never", mirror: !!v.mirror, auto_discovered: !!v.auto, remote: remotes[k] }])),
-    agents: agentNames(), default_agent: cfg.defaultAgent ?? "pi", agents_detail: agentsDetail(), project_agents: projectAgents(), models: MODELS, max_parallel: maxParallel(), prefs: prefsView(), approve: cfg.approve, ...approveAd(), access: cfg.access ?? "worktree", machine_tasks: true,
+    agents: agentNames(), default_agent: cfg.defaultAgent ?? "pi", agents_detail: agentsDetail(), project_agents: projectAgents(), models: MODELS, model_catalogs: MODEL_CATALOGS, model_discovery: { v: 1 }, max_parallel: maxParallel(), prefs: prefsView(), approve: cfg.approve, ...approveAd(), access: cfg.access ?? "worktree", machine_tasks: true,
     verify_autodetect: true, cancel: true, build: RUNNER_BUILD, hours: cfg.hours ?? null, // "hours": free-form availability note from runner.json (e.g. "08:00-23:00 America/Los_Angeles"), advertised as-is
     spec: { version: 2, modes: ["plan", "execute"], promote: true, acceptance: "project verify list" },
     ask: { agents: Q.askAgents(), sandbox: await Q.sandboxKind(), idle_min: Q.idleMs() / 60_000, auto_own_apps: cfg.askAuto !== false }, // quick asks (op ask)

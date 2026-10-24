@@ -156,3 +156,18 @@ Everything that grants or widens access (approving a computer, an app or a sign-
 - **Forgot it:** on the server's shell `kitebook owner reset-password [<device id>]` (when that computer is the server itself, it opens a new setup link right away), or from another of your computers Settings -> Devices -> Reset password (or `kitebook devices reset-password <id>`). That computer may then set a new one within 15 minutes: `kitebook password set`. Wrong passwords are counted on the computer: three are free, then each try waits longer (30 s, 1 min, 2 min ... up to 15 min).
 - **Cloud machines:** a cloud machine that only runs agents needs no URL and no password. Run `kitebook join <url-of-your-kitebook>` on it (outbound only) and approve its code from one of your computers (password or fingerprint). Only the machine hosting the Kitebook server needs a URL for cloud assistants (Claude.ai, ChatGPT). A joined machine without a password runs tasks but can't approve anything, and it can't give itself a password (an agent on it could otherwise make it an approver): to approve from it later, press Allow a password next to it under Settings -> Devices on another computer (or `kitebook devices reset-password <id>`), then run `kitebook password set` on it within 15 minutes.
 
+
+
+## Address compatibility and avoiding a domain
+
+Local coding agents should use the local listener. For remote assistants, address reachability and the assistant's hostname policy are separate checks. [Tailscale Funnel publishes an HTTPS ts.net address to the internet; Serve limits access to the tailnet](https://tailscale.com/kb/1223/funnel). A Tailscale API plugin alone does not prove that the assistant sandbox can reach your private service or that ts.net is allowed as an MCP destination.
+
+| Connection | Evidence and next step |
+| --- | --- |
+| Hark with ts.net | The Kitebook owner reports rejection and uses a custom domain. This is an observed account/setup restriction, not a verified universal vendor policy. |
+| Muse with a Tailscale plugin | Plugin support is reported; acceptance of ts.net for Kitebook MCP/API remains unverified. Test identity and tools/list from that actual sandbox. |
+| Other remote assistants | Test DNS/TLS/reachability, then authentication and tools/list. Classify provider hostname rejection separately from a Kitebook failure. |
+
+Prefer a supported no-domain path when verified. A custom domain is a compatibility fallback for restrictive hosts, not a requirement for every agent. Quick-tunnel URLs can change on restart, so a successful connection does not establish a stable address. Do not expose a service or join an assistant to your tailnet automatically. Provider-specific diagnostics and a tested compatibility matrix are tracked in #19.
+
+See [discovery and restart lifecycle](agent-discovery.md) for models, native conversation status and MCP refresh.

@@ -267,12 +267,16 @@ if (MAIN) {
         console.error(`(${r.agent ?? "agent"}${r.answer_s != null ? `, ${r.answer_s} s` : ""}${r.session?.warm ? ", warm session" : ""} · ${r.needs_task ? "needs changes: " : ""}run it as a task: kitebook ask --task ${r.id})`); }
       else { if (shown) process.stdout.write("\n"); console.error(`${r.state}: ${r.error ?? ""}`); process.exit(1); }
     }
+    else if (op === "mcp" && pos[0] === "check") console.log(JSON.stringify(await call("mcp_status", {
+      ...(kv["known-tool-revision"] ? { known_tool_revision: String(kv["known-tool-revision"]) } : {}),
+      ...(kv["known-instructions-revision"] ? { known_instructions_revision: String(kv["known-instructions-revision"]) } : {}) }), null, 1));
     else if (op === "sessions") { // the owner's local agent sessions (sessions_search / session_get / session_send; the owner allows each app in Settings)
       const sub = pos[0], show = (r: any) => console.log(JSON.stringify(r, null, 1)), pick = (ks: string[]) => Object.fromEntries(ks.filter(k => kv[k] !== undefined).map(k => [k, kv[k]]));
       if (sub === "search") show(await call("sessions_search", { query: pos.slice(1).join(" "), ...pick(["agent", "cwd", "since", "limit", "to"]) }));
+      else if (sub === "status" && pos[1] && pos[2]) show(await call("session_status", { agent: pos[1], session_id: pos[2], ...(kv.to ? { runner: kv.to } : {}) }));
       else if (sub === "get" && pos[1] && pos[2]) show(await call("session_get", { agent: pos[1], id: pos[2], ...pick(["last", "to"]) }));
       else if (sub === "send" && pos[1] && pos[2]) show(await call("session_send", { agent: pos[1], id: pos[2], text: pos.slice(3).join(" ") || kv.text, ...pick(["mode", "project", "repo", "cwd", "model", "to"]) }));
-      else { console.error("usage: kitebook sessions search [words] [--agent codex|claude|pi|gemini|copilot|opencode|cursor] [--cwd <folder>] [--since 2d]\n       kitebook sessions get <agent> <id> [--last 20]\n       kitebook sessions send <agent> <id> <text> [--mode steer] [--cwd <folder> | --project p]"); process.exit(2); }
+      else { console.error("usage: kitebook sessions search [words] [--agent codex|claude|pi|gemini|copilot|opencode|cursor] [--cwd <folder>] [--since 2d]\n       kitebook sessions status <agent> <id> [--to <runner>]\n       kitebook sessions get <agent> <id> [--last 20]\n       kitebook sessions send <agent> <id> <text> [--mode steer] [--cwd <folder> | --project p]"); process.exit(2); }
     }
     else if (op === "watch") {
       const q = new URLSearchParams({ ...(SPACE ? { space: SPACE } : {}), ...(kv.since !== undefined ? { since: String(kv.since) } : {}) });

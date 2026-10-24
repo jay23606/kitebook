@@ -58,6 +58,7 @@ function handle(m: any) {
   switch (method) {
     case "initialize": return ok({ userAgent: "kitebook/0.163.0 (fake)", codexHome: "/tmp/fake-codex", platformFamily: "unix", platformOs: "linux" });
     case "initialized": return;
+    case "model/list": return process.env.FAKE_CODEX_MODELS_ERROR ? err(-32601, "model listing unavailable") : ok(p.cursor ? { data: [{ id: "m2", model: "gpt-next", displayName: "Next", hidden: false }], nextCursor: null } : { data: [{ id: "m1", model: "gpt-fake", displayName: "Fake", isDefault: true }, { id: "h", model: "hidden", hidden: true }], nextCursor: "page-2" });
     case "thread/start": thread = `th_${process.pid}_${++n}`; ok(thr(thread)); return note("thread/started", { thread: threadObj(thread) });
     case "thread/resume": if (String(p.threadId).startsWith("owner-open")) return err(-32600, `thread ${p.threadId} already has an active writer`);
       thread = p.threadId; return ok(thr(thread!));
