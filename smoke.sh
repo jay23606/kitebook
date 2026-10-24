@@ -2121,6 +2121,12 @@ kill $PMP 2>/dev/null || true; pkill -f "$IH/.kitebook/current/runner.ts" 2>/dev
 IMB=$T/imbin; mkdir -p $IMB; for a in pi codex claude; do printf '#!/bin/sh\necho "%s $*" >> %s\n' $a $T/imagents.log > $IMB/$a; chmod +x $IMB/$a; done
 # a current Pi lists its `pi mcp` command in --help (kitebook connect checks before any `pi mcp ...`)
 printf '#!/bin/sh\nif [ "$1" = --help ]; then echo "Commands:"; echo "  pi mcp <command>             Check MCP servers"; exit 0; fi\necho "pi $*" >> %s\n' $T/imagents.log > $IMB/pi; chmod +x $IMB/pi
+cat > $IMB/codex <<'EOF'
+#!/usr/bin/env bun
+const fs=require("fs"),a=process.argv.slice(2);fs.appendFileSync(process.env.IMLOG,"codex "+a.join(" ")+"\n");
+if(a[1]==="add"){const d=process.env.HOME+"/.codex";fs.mkdirSync(d,{recursive:true});fs.writeFileSync(d+"/config.toml",'[mcp_servers.kitebook]\nurl = '+JSON.stringify(a[a.indexOf("--url")+1])+'\n');}
+EOF
+chmod +x $IMB/codex; export IMLOG=$T/imagents.log
 printf '#!/bin/sh\nexit 0\n' > $IMB/gemini; chmod +x $IMB/gemini; : > $T/imagents.log
 IMH=$T/imhome; mkdir -p $IMH/.gemini; echo '{"theme":"dark","mcpServers":{"other":{"command":"x"}}}' > $IMH/.gemini/settings.json; : > $IMH/.zshrc
 curl -s $O/install.sh > $T/install2.sh; [ "$(sp -d '{"op":"mint","client":"runner"}')" = 200 ] && RI2=$(jq -r .result.snippet $T/sp.out | awk '{print $NF}') || die "mint runner 2"
@@ -2133,8 +2139,8 @@ imname(){ jq -r --arg b "$1" '.result.spaces[0].apps[]|select((.name|test("^"+$b
 imnames(){ jq -c '[.result.spaces[0].apps[].name]|sort' $T/pol.json; }
 IMT=$(sed -n 's/^export KITEBOOK_PI_TOKEN=//p' $IMH/.kitebook/agent-tokens.env); pol; IMPI=$(imname pi); IMCX=$(imname codex); IMN0=$(imnames)
 grep -q "kitebook: also let Pi, Codex, Claude Code and Gemini CLI use Kitebook? Each gets its own notes folder and can't send tasks; you can change that in Settings. \[Y/n\]" $T/iminst.log \
-  && grep -q "^✓ Connected Pi, Codex, Claude Code and Gemini CLI to Kitebook: each uses only its own folder and can't send tasks (change it in Settings)$" $T/iminst.log && ! grep -q "rk\.erin\." $T/iminst.log \
-  && grep -qx "pi mcp add kitebook --url $O/mcp --bearer-token-env-var KITEBOOK_PI_TOKEN" $T/imagents.log && grep -qx "codex mcp add kitebook --url $O/mcp --bearer-token-env-var KITEBOOK_CODEX_TOKEN" $T/imagents.log \
+  && jq -e '[keys[]]|sort==["claude","codex","gemini","pi"]' $IMH/.kitebook/agents-connected.json >/dev/null && ! grep -q "rk\.erin\." $T/iminst.log \
+  && grep -qx "pi mcp add kitebook --url $O/mcp --bearer-token-env-var KITEBOOK_PI_TOKEN" $T/imagents.log && grep -qx "codex mcp add kitebook --url $O/mcp" $T/imagents.log \
   && grep -q "^claude mcp add --transport http kitebook $O/mcp --header Authorization: Bearer rk\.erin\.[A-Za-z0-9_-]* -s user$" $T/imagents.log && grep -qx "pi mcp remove kitebook" $T/imagents.log \
   && [ "$(stat -c %a $IMH/.kitebook/agent-tokens.env)" = 600 ] && [ "$(grep -c '# Kitebook: agent tokens' $IMH/.zshrc)" = 1 ] && case "$IMT" in rk.erin.*) true;; *) false;; esac \
   && jq -e --arg o "$O" '.theme=="dark" and .mcpServers.other.command=="x" and .mcpServers.kitebook.httpUrl==($o+"/mcp") and (.mcpServers.kitebook.headers.Authorization|startswith("Bearer rk.erin."))' $IMH/.gemini/settings.json >/dev/null \
@@ -2144,7 +2150,7 @@ grep -q "kitebook: also let Pi, Codex, Claude Code and Gemini CLI use Kitebook? 
   && pass "install.sh: one [Y/n] question names the agents it found; Pi/Codex/Claude Code/Gemini get Kitebook in their own MCP config (env file 0600 + one shell line, claude -s user, gemini JSON merged), own folder only, no task sending; no token printed" || { cat $T/iminst.log $T/imagents.log; jq -c '.result.spaces[0].apps[]|{name,verbs,paths}' $T/pol.json; die "installer agents"; }
 # (b) re-runnable: kitebook connect pi again = the same connection (fresh token, old one dead), the "kitebook" entry replaced, never pi-2; claude-code alias
 HOME=$IMH SHELL=/bin/zsh PATH=$IMB:$PATH bun $IMH/.kitebook/current/runner.ts connect pi claude-code > $T/imc.out 2>&1; IMT2=$(sed -n 's/^export KITEBOOK_PI_TOKEN=//p' $IMH/.kitebook/agent-tokens.env); pol
-grep -q "^✓ Connected Pi and Claude Code to Kitebook: each reads and edits only its own folder (kb/$IMPI, kb/$IMCC) and can't send tasks. Change that in Settings: $O/settings$" $T/imc.out && [ "$IMT2" != "$IMT" ] \
+jq -e --arg p "$IMPI" --arg c "$IMCC" '.pi.peer==$p and .claude.peer==$c' $IMH/.kitebook/agents-connected.json >/dev/null && [ "$IMT2" != "$IMT" ] \
   && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $O/v1/whoami -H "authorization: Bearer $IMT" -H 'content-type: application/json' -d '{}')" = 401 ] && curl -s -X POST $O/v1/whoami -H "authorization: Bearer $IMT2" -H 'content-type: application/json' -d '{}' | jq -e --arg n "$IMPI" '.result.name==$n' >/dev/null \
   && [ "$(imnames)" = "$IMN0" ] && [ "$(grep -c '# Kitebook: agent tokens' $IMH/.zshrc)" = 1 ] && [ "$(grep -c '^export KITEBOOK_PI_TOKEN=' $IMH/.kitebook/agent-tokens.env)" = 1 ] \
   && [ "$(grep -cx 'pi mcp remove kitebook' $T/imagents.log)" = 2 ] && HOME=$IMH PATH=$IMB:$PATH bun $IMH/.kitebook/current/runner.ts connect --detect | grep -qx "pi codex claude gemini" \
@@ -2189,7 +2195,7 @@ BS8=0; bset --click "#app-gemini summary" --click "#rm-gemini" --click "#rm-gemi
   && pass "headless Chromium: Remove asks once more (Yes, remove gemini), then the app's sign-in stops working" || { cat $T/bs8.out; die "settings remove"; }
 fi
 # (h) access end dates are enforced; the owner-only ops refuse without the session or nonce
-[ "$(sp -d "{\"op\":\"app_expiry\",\"app\":\"$IMCX\",\"days\":0.00002,\"nonce\":\"$(NN)\"}")" = 200 ] && sleep 3 && IMC=$(sed -n 's/^export KITEBOOK_CODEX_TOKEN=//p' $IMH/.kitebook/agent-tokens.env) \
+[ "$(sp -d "{\"op\":\"app_expiry\",\"app\":\"$IMCX\",\"days\":0.00002,\"nonce\":\"$(NN)\"}")" = 200 ] && sleep 3 && IMC=$(bun -e 'console.log(Bun.TOML.parse(require("fs").readFileSync(process.argv[1],"utf8")).mcp_servers.kitebook.http_headers.Authorization.slice(7))' $IMH/.codex/config.toml) \
   && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $O/v1/whoami -H "authorization: Bearer $IMC" -H 'content-type: application/json' -d '{}')" = 401 ] \
   && [ "$(sp -d "{\"op\":\"app_expiry\",\"app\":\"$IMCX\",\"days\":null,\"nonce\":\"$(NN)\"}")" = 200 ] && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $O/v1/whoami -H "authorization: Bearer $IMC" -H 'content-type: application/json' -d '{}')" = 200 ] \
   && [ "$(sp -d '{"op":"app_expiry","app":"codex","days":7}')" = 403 ] && [ "$(sp -d "{\"op\":\"app_expiry\",\"app\":\"imac\",\"days\":7,\"nonce\":\"$(NN)\"}")" = 400 ] \
