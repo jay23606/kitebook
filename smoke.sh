@@ -208,7 +208,7 @@ h glob 'shared/**' | jq -e '.files==["shared/race.dat","shared/same.md","shared/
   && h ls nosuch 2>&1 | grep -q "no such directory" && h ls shared/sp 2>&1 | grep -q "no such directory" && pass "glob/ls by prefix range: same results, 404 kept" || die "glob/ls range: $(h glob 'shared/**' | jq -c .files)"
 
 # MCP front door
-WBC=0; python3 scripts/workspace-browser.py "$KITEBOOK_URL" --jar "$FJ0" > $T/workspace-browser.log 2>&1 || WBC=$?
+WBC=0; python3 scripts/workspace-browser.py "$KITEBOOK_URL" --jar "${FJ0:-}" > $T/workspace-browser.log 2>&1 || WBC=$?
 if [ "$WBC" = 3 ]; then skipb "workspace browser (no Chromium/Playwright)"; elif [ "$WBC" != 0 ]; then cat $T/workspace-browser.log; die "workspace browser"; fi
 KITEBOOK_RECOVERY_STATE=$T/workspace-recovery.json bun scripts/workspace-check.ts > $T/workspace-recovery.log 2>&1 || { cat $T/workspace-recovery.log; die "workspace recovery"; }
 curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $HARK" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.serverInfo|.name=="Kitebook" and .title=="Kitebook" and (.description|test("knowledge base for your AI assistants and coding agents")) and .version' >/dev/null || die "mcp initialize"
