@@ -29,13 +29,27 @@ with sync_playwright() as pw:
     def api(action, args=None, nonce=None):
         return ctx.request.post(a.url+'/start', data=json.dumps({'op':'workspace','space':'main','action':action,'args':args or {},'nonce':nonce}), headers={'content-type':'application/json'})
     def nonce(): return ctx.request.post(a.url+'/start', data=json.dumps({'op':'nonce'}), headers={'content-type':'application/json'}).json()['result']['nonce']
-    page.goto(a.url+'/start'); page.wait_for_selector('#knowledge:not([hidden])'); page.wait_for_function("() => document.querySelector('#memory-state').textContent.includes('version')")
+    page.goto(a.url+'/start'); page.wait_for_selector('#knowledge:not([hidden])'); page.wait_for_function("() => document.querySelector('#memory-state').title.includes('version')")
     check(page.locator('#home').is_hidden(), 'knowledge is the default view')
     check(api('save', {'text':'must not save'}).status == 403, 'owner writes require one-time nonce')
     check(not api('arbitrary-admin-command').json().get('ok'), 'workspace RPC rejects unknown actions')
     unauth = browser.new_context(); check(unauth.request.post(a.url+'/start', data=json.dumps({'op':'workspace','action':'knowledge'}), headers={'content-type':'application/json'}).status == 401, 'anonymous workspace reads refused'); unauth.close()
+    held = []
+    def hold_refresh(route):
+        body = route.request.post_data_json if route.request.method == 'POST' else {}
+        if body and body.get('op') == 'workspace' and body.get('action') == 'knowledge' and not held:
+            held.append(route)
+        else: route.continue_()
+    page.route('**/start', hold_refresh)
+    page.locator('#memory-refresh').click(); page.wait_for_function("() => document.querySelector('.memory-grid').dataset.loading === 'true'")
+    check(page.locator('#memory-refresh svg').evaluate("e => getComputedStyle(e).animationName") == 'workspace-spin', 'refresh animates only while request is pending')
+    page.emulate_media(reduced_motion='reduce')
+    check(page.locator('#memory-refresh svg').evaluate("e => getComputedStyle(e).animationName") == 'none', 'reduced motion disables loading rotation')
+    page.emulate_media(reduced_motion='no-preference'); held[0].continue_(); page.unroute('**/start', hold_refresh)
+    page.wait_for_function("() => document.querySelector('.memory-grid').dataset.loading === 'false'")
+    check(page.locator('#memory-detail button').evaluate_all("els => els.every(e => getComputedStyle(e).textDecorationLine === 'none')"), 'button controls have no text underline')
     page.locator('#memory-new').click(); page.locator('#memory-edit-title').fill('Workspace browser trial'); page.locator('#memory-edit-text').fill('A shared finding for the next daily agent.'); page.locator('#memory-detail').get_by_role('button',name='Save',exact=True).click()
-    entry = page.locator('.memory-item').filter(has_text='Workspace browser trial'); entry.wait_for(); entry.click(); page.locator('#memory-edit-text').wait_for()
+    entry = page.locator('.memory-item').filter(has_text='Workspace browser trial'); entry.wait_for(); entry.click(); page.locator('#memory-detail').get_by_role('button',name='Edit note',exact=True).click(); page.locator('#memory-edit-text').wait_for()
     check(page.locator('#memory-edit-text').input_value().startswith('A shared finding'), 'saved note is retrieved in full')
     # A second writer wins while the editor is open. Save must preserve the edit and report a conflict.
     rows = api('knowledge').json()['result']['entries']; note = next(x for x in rows if x.get('title') == 'Workspace browser trial'); original = api('entry', {'id':note['id']}).json()['result']
@@ -43,10 +57,11 @@ with sync_playwright() as pw:
     page.locator('#memory-edit-text').fill('Local draft must survive a conflict.'); page.locator('#memory-detail').get_by_role('button',name='Save',exact=True).click(); page.wait_for_function("() => document.querySelector('#memory-detail [role=alert]').textContent.includes('conflict')")
     check(page.locator('#memory-edit-text').input_value() == 'Local draft must survive a conflict.', 'conflict preserves local editor content')
     # Reload deliberately discards the draft, then show history and forget with a new version check.
-    page.on('dialog', lambda d: d.accept()); page.reload(); page.locator('.memory-item').filter(has_text='Workspace browser trial').click(); page.locator('#memory-edit-text').wait_for()
+    page.on('dialog', lambda d: d.accept()); page.reload(); page.locator('.memory-item').filter(has_text='Workspace browser trial').click(); page.locator('#memory-detail').get_by_role('button',name='Edit note',exact=True).click(); page.locator('#memory-edit-text').wait_for()
     check(page.locator('#memory-edit-text').input_value() == 'Correction from another agent.', 'correction is the current retrieval result')
-    page.locator('#memory-detail').get_by_role('button',name='History',exact=True).click(); page.wait_for_selector('#memory-detail pre')
-    check(bool(page.locator('#memory-detail pre').inner_text()), 'version history loads')
+    page.locator('#memory-detail').get_by_role('button',name='Cancel',exact=True).click()
+    page.locator('.document-source > summary').click(); page.wait_for_selector('.version-history li')
+    check(page.locator('.version-history li').count() >= 2, 'version history loads')
     page.evaluate("() => {document.activeElement.blur();scrollTo(0,0)}")
     page.screenshot(path=str(out/'knowledge-desktop.png'), full_page=True)
     for width in [320,390,768,1440,2560]:
@@ -54,7 +69,7 @@ with sync_playwright() as pw:
         check(page.evaluate('document.documentElement.scrollWidth <= innerWidth+1'), 'no page overflow at '+str(width))
     page.set_viewport_size({'width':390,'height':844}); page.screenshot(path=str(out/'knowledge-mobile.png'), full_page=True)
     page.emulate_media(color_scheme='dark'); page.screenshot(path=str(out/'knowledge-dark.png'), full_page=True)
-    page.locator('#memory-detail').get_by_role('button',name='Forget',exact=True).click(); page.wait_for_function("() => !document.querySelector('#memory-edit-text')")
+    page.locator('#memory-detail').get_by_role('button',name='Forget note',exact=True).click(); page.wait_for_function("() => document.querySelector('#memory-state').textContent.includes('Removed')")
     check(not any(x['id'] == note['id'] for x in api('knowledge').json()['result']['entries']), 'forgotten entry leaves current knowledge')
     page.locator('#memory-files').click(); page.wait_for_function("() => document.querySelector('#memory-state').textContent.startsWith('shared /')")
     check(page.locator('#memory-list').is_visible(), 'file browser opens')

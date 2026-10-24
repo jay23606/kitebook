@@ -368,7 +368,7 @@ h task_get $ID2 | jq -e ".note|test(\"allowlisted\")" >/dev/null && pass "reject
 
 # MCP polish: tool titles/annotations/outputSchemas, resources (tasks, files), prompts that build a ready task_create
 mc(){ curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $1" -H content-type:application/json -d "$2"; }
-# fix-agents: tools/list by caller. Assistants get ~30 (33 with runner-health's status, 32 with assistant-brief's brief_propose and dev-update-from-assistant's relay_update) (no runner-only tools); the runner gets all; a task addressed to you adds the target tools
+# tools/list by caller: assistants get 38 including restart recovery (no runner-only tools); the runner gets all; a task addressed to you adds the target tools
 RONLY='["policy","settings_report","code_report","task_live","task_approval","approval_page","approval_wait","task_release","task_steer_take","task_claim","task_progress","task_complete","presence_report","health_report","has"]'
 mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-a.json; mc $MAC '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-r.json
 TGT=$(bun client/admin.ts peer tgt assistant 2>/dev/null); bun client/admin.ts grant tgt main read "shared/**" >/dev/null; mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t0.json
@@ -383,7 +383,7 @@ jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 40 an
  \
   && mc $HARK '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"mcp_status","arguments":{}}}' | jq -e '.result.structuredContent | .reload_required and .applied==false and (.tool_revision|test("^[a-f0-9]{64}$")) and (.tools|index("agent_models"))' >/dev/null \
   || { jq -c '[.result.tools[].name]' $T/tl-a.json $T/tl-t0.json $T/tl-t1.json; die "mcp tools by caller"; }
-mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.instructions | test("Start here: describe") and test("ask \\{question\\}") and test("task_steer") and test("after its current run finishes") and test("task_answer") and test("presence") and test("inbox on a schedule") and test("Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI") and (test("ONE call")|not) and (test("changes\\(since\\)")|not)' >/dev/null \
+mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -e '.result.instructions | test("kb_search") and test("sync_publish") and test("sync_ack") and test("if_match") and test("ask \\{question\\}") and test("task_steer") and test("after its current run finishes") and test("task_answer") and test("presence") and test("inbox on a schedule") and test("Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI") and (test("ONE call")|not) and (test("changes\\(since\\)")|not)' >/dev/null \
   && mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '(.result.tools[]|select(.name=="task_steer")|.description|test("after the agent.s current run finishes")) and (.result.tools[]|select(.name=="inbox")|.description|test("^The polling call")) and (.result.tools[]|select(.name=="describe")|.description|test("^Start here"))' >/dev/null \
  || { mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -r .result.instructions; die "mcp instructions"; }
 mc $HARK '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' | jq -e '.result.protocolVersion=="2025-06-18" and .result.capabilities.resources.subscribe==false and .result.capabilities.prompts' >/dev/null || die "mcp caps"
@@ -3946,7 +3946,7 @@ bun client/admin.ts grant bhark brief read,write,dispatch "**" >/dev/null; bun c
 bm(){ curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $1" -H content-type:application/json -d "$2"; }
 bv(){ local d='{}'; curl -s -X POST $KITEBOOK_URL/v1/$2 -H "authorization: Bearer $1" -H content-type:application/json -d "${3:-$d}"; }
 BI=$(bm $BH '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | jq -r .result.instructions)
-echo "$BI" | grep -q "Start here: describe" && echo "$BI" | grep -q "The owner's standing instructions for you (brief etag" && echo "$BI" | grep -q "Ask the owner before anything that deploys" \
+echo "$BI" | grep -q "sync_publish" && echo "$BI" | grep -q "The owner's standing instructions for you (brief etag" && echo "$BI" | grep -q "Ask the owner before anything that deploys" \
   && bv $BH describe | jq -e '(.result|keys_unsorted[0])=="brief" and (.result.brief.text|test("Instructions for your assistants")) and (.result.brief.etag|length)==12 and .result.brief.default==true and .result.brief.updated==null' >/dev/null \
  || { echo "$BI"; bv $BH describe | jq .result.brief; die "brief default"; }
 BJ=$T/brief.jar; : > $BJ; BL=$(bun client/admin.ts open --print | tail -1 | sed 's/.*#login=//')
