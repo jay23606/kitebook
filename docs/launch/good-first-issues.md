@@ -1,15 +1,15 @@
-# Good first issues (ready to paste)
+# Deferred work ideas (maintainer notes)
 
-Twelve starter issues for outside contributors, each checked against the code on `dev` (2026-10-21). They come from README "Not built yet", the deferred items on the maintainer's backlog, the launch reviews, and gaps found while recording the demo. **Nothing has been filed.** When the repo is public, paste each one as a new issue: the title line is the issue title, the block under it is the body, and the labels line goes in Labels.
+**This is historical planning material, not a call for contributions.** These ideas were drafted against `dev` on 2026-10-21 and may be outdated. Current issue discussions and the [contribution guide](../../CONTRIBUTING.md) take precedence. Do not file or implement these ideas without maintainer agreement.
 
-Create these labels first (Issues → Labels): `good first issue`, `help wanted`, `tests`, `docs`, `runner`, `server`, `mcp`, `kb`, `ui`, `cli`, `agents`. Sizes: **XS** under an hour, **S** an afternoon, **M** a day or two.
+The technical notes below are retained for future prioritization. They are not assigned work, release commitments or approved implementation plans. The original filename is kept so existing links continue to resolve.
 
-Every issue shares the same definition of done, so it's in each body: `bun run typecheck` is clean, `npm run test:fast` passes (or the full `SKIP_NTFY=1 ./smoke.sh` for runner/server changes), and the PR targets `dev`.
+Sizes: **XS** under an hour, **S** an afternoon, **M** a day or two; these are historical estimates, not deadlines.
 
 ---
 
 ### 1. Smoke: cover the runner's `autoFastForward`
-**Labels:** `good first issue`, `tests`, `runner` · **Size:** S
+**Labels:** `tests`, `runner` · **Size:** S
 ```markdown
 **What:** `client/runner-mirror.ts` fast-forwards a project checkout that is clean and only *behind* its upstream when `autoFastForward` is true in runner.json (global or per project; default off). No test covers it.
 
@@ -21,7 +21,7 @@ Definition of done: `bun run typecheck` clean, `SKIP_NTFY=1 ./smoke.sh` ends in 
 ```
 
 ### 2. Test the S3 blob driver against MinIO
-**Labels:** `good first issue`, `help wanted`, `tests`, `server` · **Size:** S-M
+**Labels:** `tests`, `server` · **Size:** S-M
 ```markdown
 **What:** README "Not built yet": the S3 blob store (`BLOB_STORE=s3`, signed with `aws4fetch`) has never run against a real bucket. MinIO in Docker is a free local stand-in.
 
@@ -33,7 +33,7 @@ Definition of done: `bun run typecheck` clean, the new script passes against Min
 ```
 
 ### 3. `kitebook help <op>`: show one op's parameters
-**Labels:** `good first issue`, `cli` · **Size:** XS-S
+**Labels:** `cli` · **Size:** XS-S
 ```markdown
 **What:** `kitebook ops` lists every op, but seeing one op's parameters means reading `src/ops.ts` or `/openapi.json`. `kitebook help` with no argument already prints the general help (`client/cli.ts`, line ~164).
 
@@ -45,7 +45,7 @@ Definition of done: `bun run typecheck` clean, `npm run test:fast` passes, PR ag
 ```
 
 ### 4. `admin.ts help` prints the full usage
-**Labels:** `good first issue`, `cli` · **Size:** XS
+**Labels:** `cli` · **Size:** XS
 ```markdown
 **What:** `bun client/admin.ts` with no command prints a one-line list of command names and exits 2. The real usage, with every argument, is only in the comment at the top of `client/admin.ts`.
 
@@ -57,7 +57,7 @@ Definition of done: `bun run typecheck` clean, `npm run test:fast` passes, PR ag
 ```
 
 ### 5. Use an index for `kb_list key_prefix`
-**Labels:** `good first issue`, `kb`, `server` · **Size:** S
+**Labels:** `kb`, `server` · **Size:** S
 ```markdown
 **What:** `kb_list` filters `key_prefix` with `substr(key,1,?)=?` (`src/kb.ts`, line ~165), which SQLite can't serve from an index, so it scans every KB row.
 
@@ -69,7 +69,7 @@ Definition of done: `bun run typecheck` clean, `SKIP_NTFY=1 ./smoke.sh` ends in 
 ```
 
 ### 6. Webhooks: suspend on failure rate, not only 20 failures in a row
-**Labels:** `good first issue`, `server` · **Size:** S
+**Labels:** `server` · **Size:** S
 ```markdown
 **What:** an event subscription is suspended after `EVENTS_SUSPEND_AFTER` (default 20) *consecutive* failed deliveries (`src/space/events.ts`, line ~93). A destination that fails every other time is never suspended, and verification POSTs have no per-host rate limit.
 
@@ -81,7 +81,7 @@ Definition of done: `bun run typecheck` clean, `SKIP_NTFY=1 ./smoke.sh` ends in 
 ```
 
 ### 7. MCP: optional strict `Mcp-Name` header check
-**Labels:** `good first issue`, `mcp` · **Size:** XS
+**Labels:** `mcp` · **Size:** XS
 ```markdown
 **What:** on `events/*` requests a missing `Mcp-Name` header is tolerated and only a mismatch is rejected (`src/mcp.ts`, the SEP-3415 comment around line 67).
 
@@ -93,7 +93,7 @@ Definition of done: `bun run typecheck` clean, `SKIP_NTFY=1 ./smoke.sh` ends in 
 ```
 
 ### 8. `/start`: the next-step Copy button needs the same fallback as the others
-**Labels:** `good first issue`, `ui` · **Size:** XS
+**Labels:** `ui` · **Size:** XS
 ```markdown
 **What:** most Copy buttons on `/start` use `copyText()`, which falls back to a hidden textarea when `navigator.clipboard` is missing (plain-http origins, e.g. a LAN self-host). The Copy button on a finished task's "Next:" line (`src/start.ts`, line ~357) calls `navigator.clipboard` directly and only says "Select the command and copy it by hand".
 
@@ -105,7 +105,7 @@ Definition of done: `bun run typecheck` clean, `npm run test:fast` passes, PR ag
 ```
 
 ### 9. Unit tests for the stdio bridge `mcp-stdio.mjs`
-**Labels:** `good first issue`, `tests`, `mcp` · **Size:** S
+**Labels:** `tests`, `mcp` · **Size:** S
 ```markdown
 **What:** `client/mcp-stdio.mjs` (stdio ⇄ `/mcp`, for MCP clients that only speak stdio) has no unit tests; batching, notifications, a 401 and a dropped connection aren't covered.
 
@@ -117,7 +117,7 @@ Definition of done: `bun run typecheck` clean, `bun test client/` green, PR agai
 ```
 
 ### 10. Docs: a "How it works" diagram
-**Labels:** `good first issue`, `docs` · **Size:** XS-S
+**Labels:** `docs` · **Size:** XS-S
 ```markdown
 **What:** newcomers ask what talks to what. The README has no picture of assistant → Kitebook ← runner → coding agent → git branch.
 
@@ -129,7 +129,7 @@ Definition of done: the smoke check "every relative doc link resolves" passes (`
 ```
 
 ### 11. Runner: pass the locale and temp folder through to agents, and document `env`
-**Labels:** `good first issue`, `runner`, `agents` · **Size:** XS
+**Labels:** `runner`, `agents` · **Size:** XS
 ```markdown
 **What:** `agentEnv()` (`client/runner-agents.ts`, line ~137) gives a coding agent only `PATH`, `HOME`, `TERM` (plus Windows essentials) and the names listed in runner.json `env`. `LANG`/`LC_ALL` and `TMPDIR` aren't passed, so agents can fall back to the C locale and the system temp folder. `docs/runner.md` also doesn't say which names to add to `env` for key-based sign-in.
 
@@ -141,7 +141,7 @@ Definition of done: `bun run typecheck` clean, `SKIP_NTFY=1 ./smoke.sh` ends in 
 ```
 
 ### 12. Agent adapters: put `--` before the prompt where the CLI allows it
-**Labels:** `good first issue`, `agents` · **Size:** XS
+**Labels:** `agents` · **Size:** XS
 ```markdown
 **What:** the adapters pass the prompt as the last positional argument (`build()` in `client/agent-adapters.ts`, line ~127). For CLIs that read positionals with a flag parser (opencode `run`, `cursor-agent`), a prompt that starts with `-` would be read as a flag.
 
@@ -154,4 +154,4 @@ Definition of done: `bun run typecheck` clean, `bun test client/` green, `SKIP_N
 
 ---
 
-More starter issues shaped as adapters (OpenCode, Cline, ACP, Gemini CLI, new assistant connectors) are kept with the maintainer's launch notes; file 3-5 of them alongside these.
+Other adapter and connector ideas remain in the maintainer's launch notes. Discuss current needs and scope before proposing implementation.

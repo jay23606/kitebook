@@ -2,6 +2,21 @@
 
 Thanks for helping. Kitebook is a small, dense TypeScript codebase: a Cloudflare Worker (the server) and a Bun runner/CLI (the client). You can run and test all of it locally, with no Cloudflare account and no Mac.
 
+## Discuss before implementing
+Kitebook has limited review capacity. Open issues track the maintainer's backlog; they are not an invitation to start work or a promise that a PR will be accepted.
+
+1. Check existing issues and PRs for the same problem. Add reproduction steps or evidence to an existing issue rather than opening duplicates.
+2. Describe the user problem, proposed approach and scope in the issue, and wait for maintainer agreement before implementation. A self-assignment or "I'll work on this" comment is not agreement. For a documentation correction, describe the correction first too.
+3. After agreement, make one focused change on a branch from `dev` and open the PR against `dev`. Link the discussion where the scope was agreed.
+4. Explain the behavior before and after the change, how you verified it, and any remaining limitations. Respond to review feedback before starting more PRs.
+
+Bug reports with clear reproduction steps are welcome without prior agreement. Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
+
+## AI-assisted contributions and review
+AI tools are allowed. The contributor is responsible for understanding every change, checking the generated code, and running the checks they report. State how AI tools were used in the PR. Never claim a test passed unless you ran it; report failures, skips and untested behavior plainly.
+
+Please don't submit batches of unrelated PRs, duplicate implementations, speculative refactors or changes whose only purpose is to increase contribution counts. A small patch is welcome when it solves an agreed problem and has appropriate verification. Maintainers may close PRs without agreed scope, reproducible value or accurate verification evidence. Review and merge are not guaranteed.
+
 ## Setup (4 commands)
 Needs Node 22+, [Bun](https://bun.sh) 1.4+ (CI pins 1.4.3), `jq`, `curl`, `git` and `python3`. For the headless-browser checks: `pip install playwright && python3 -m playwright install chromium` (without it those checks print `SKIP`).
 ```bash
@@ -49,7 +64,7 @@ npm test                      # unit tests + the full smoke (~360 checks, ~15 mi
 - Two long-lived branches: **`dev`**, where changes land first, and **`main`**, the stable branch people install. `main` only moves by a fast-forward to a `dev` commit that CI passed and that ran on a real Mac (`scripts/promote.sh`).
 - Fork, then branch from `dev`: `fix/<short-topic>` or `feat/<short-topic>`. (`hark/*` branches are made by the maintainer's own agents, and merge into `dev` too.)
 - **PRs target `dev`**, not `main`. One focused change per PR. Rebase on `dev` rather than merging it in.
-- Before you open the PR: `bun run typecheck` is clean and `SKIP_NTFY=1 ./smoke.sh` ends in `ALL PASSED`. CI runs both.
+- For code changes, run `bun run typecheck` and `npm run test:fast`. Runner or server changes also need `SKIP_NTFY=1 ./smoke.sh` ending in `ALL PASSED`. Give the commands and actual results in the PR, including failures or skips. For documentation-only changes, validate affected links and any GitHub forms, and explain why runtime tests were not run.
 - Commit messages say what changed and why, in plain words. A trailing `(smoke N)` with the new pass count is welcome.
 - Update `README.md` / `docs/*` / `src/guide.ts` when user- or agent-visible behaviour changes. User-facing text follows [docs/glossary.md](docs/glossary.md) (say workspace, connected app, folders, not space, peer, `**`).
 - Never commit secrets, a real `.dev.vars`, `runner.json` or keys. CI runs gitleaks.
@@ -60,7 +75,7 @@ Dense TypeScript that matches the code around it. Comments explain *why*, not wh
 ## Security
 Please don't open public issues for vulnerabilities. See [SECURITY.md](SECURITY.md).
 
-## Good first issues
-See [docs/launch/good-first-issues.md](docs/launch/good-first-issues.md), or issues labelled `good first issue`.
+## Choosing work
+Discuss priorities with the maintainer first. Issues marked `priority: low` are deferred backlog work. The [launch planning notes](docs/launch/good-first-issues.md) are historical ideas, not an active task list. Check the current issue discussion and get agreement before implementing any of them.
 
-By contributing, you agree that your contributions are licensed under the project's [LICENSE](LICENSE) and that you'll follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+By contributing, you agree that your contributions are licensed under the project's [MIT license](LICENSE) and that you'll follow the [Code of Conduct](CODE_OF_CONDUCT.md). No separate Contributor License Agreement (CLA) signature is required.

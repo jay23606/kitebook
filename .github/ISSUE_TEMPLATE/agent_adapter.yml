@@ -1,10 +1,10 @@
 name: Connect a coding agent or assistant
-description: Ask for (or offer to build) support for another coding agent (runner adapter) or another assistant (connector recipe)
+description: Discuss support for another coding agent or assistant before implementation
 labels: [agents, enhancement]
 body:
   - type: markdown
     attributes:
-      value: "Adapters are good first PRs: each coding agent is one entry in `client/agent-adapters.ts`, checked against the real CLI's `--help` (see the Codex, Claude Code and opencode entries). Never paste tokens or API keys here."
+      value: "Please discuss the need and approach here, and wait for maintainer agreement before implementing an adapter or opening a PR. Check existing issues and PRs first. Never paste tokens or API keys here."
   - type: dropdown
     id: kind
     attributes:
@@ -28,4 +28,4 @@ body:
     id: help
     attributes:
       label: Contributing
-      options: [{ label: "I'd like to build this myself" }]
+      options: [{ label: "I'd like to discuss implementing this after maintainer agreement" }]
