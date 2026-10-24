@@ -77,6 +77,7 @@ with sync_playwright() as pw:
     page.set_viewport_size({'width':1440,'height':1000})
     race = api('save', {'title':'Delayed save fixture','kind':'fact','text':'Before delayed save'}, nonce()).json()['result']['entries'][0]
     page.locator('#memory-refresh').click(); page.locator('.memory-item').filter(has_text='Delayed save fixture').click()
+    page.wait_for_function("() => document.querySelector('.document-title')?.textContent === 'Delayed save fixture'")
     page.locator('#memory-detail').get_by_role('button',name='Edit note',exact=True).click(); page.locator('#memory-edit-text').fill('Committed delayed edit')
     held_save = []
     def hold_saved_entry(route):
