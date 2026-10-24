@@ -102,3 +102,20 @@ test("reference delegation reads bounded knowledge, inspects code, respects task
     expect(readFileSync(join(dir, "files/shared/a.txt"), "utf8")).toBe("recover me"); expect(status(dir, "server").state).toBe("published");
   } finally { s.db.close(); rmSync(root, { recursive: true, force: true }); }
  });
+
+test("recovery refuses repeated/cyclic cursors and endless resets without applying an incomplete snapshot", async () => {
+  const root=mkdtempSync(join(tmpdir(),"kitebook-loop-"));
+  try {for(const kind of ["repeat","cycle","reset"]) {let calls=0;const dir=join(root,kind);
+    const call=async()=>{calls++;if(kind==="reset")return {reset_required:true};return {cursor:kind==="repeat"?"a":calls%2?"a":"b",read_cursor:"a",entries:[],more:true};};
+    await expect(pull(call,dir,"server")).rejects.toThrow(kind==="reset"?"changed during recovery":"cursor did not advance");
+    expect(calls).toBeLessThanOrEqual(3);expect(status(dir,"server").state).toBe("not_initialized");
+  }}finally{rmSync(root,{recursive:true,force:true});}
+});
+test("a lost acknowledgement is retryable after a fresh client loads the saved checkpoint", async () => {
+  const s=space(),dir=mkdtempSync(join(tmpdir(),"kitebook-ack-"));s.commit([{path:"shared/a.txt",content:"durable"}]);let acks=0;
+  try {const call=async(op:string,a:any)=>{const r=await s.call(op,a);if(op==="sync_ack"&&++acks===1)throw Error("response lost");return r;};
+    await expect(pull(call,dir,"server")).rejects.toThrow("response lost");
+    expect(status(dir,"server").state).toBe("published");const result=await pull(call,dir,"server");expect(result.downloaded).toBe(0);expect(acks).toBe(2);
+    expect(readFileSync(join(dir,"files/shared/a.txt"),"utf8")).toBe("durable");
+  }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
+});

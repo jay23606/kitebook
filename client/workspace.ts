@@ -30,10 +30,14 @@ export async function pull(call: Call, dir: string, remote: string, path?: strin
   const { root, state, save } = init(dir, remote, path); if (state.pending) throw new Error("publication pending; retry workspace publish before pulling");
   // A checkpoint without its materialized files is not a cache. Recover using a fresh snapshot.
   if (Object.keys(state.files).some(p => !existsSync(local(root, p)))) state.cursor = undefined;
-  let cursor = state.cursor, snapshot = !cursor, final: any, readCursor: string = ""; const desired = new Map<string, any>(); let resets = 0;
+  let cursor = state.cursor, snapshot = !cursor, final: any, readCursor: string = ""; const desired = new Map<string, any>(), seen = new Set<string>(); let resets = 0, pages = 0;
   for (;;) {
+    if (++pages > 1000) throw new Error("workspace recovery page limit reached; use a narrower path");
     const r = await call("sync", { path: state.path, cursor });
-    if (r.reset_required) { if (++resets > 2) throw new Error("workspace changed during recovery; retry pull"); cursor = undefined; snapshot = true; desired.clear(); continue; }
+    if (r.reset_required) { if (++resets > 2) throw new Error("workspace changed during recovery; retry pull"); cursor = undefined; snapshot = true; desired.clear(); seen.clear(); continue; }
+    if (typeof r.cursor !== "string" || !r.cursor || r.more && (r.cursor === cursor || seen.has(r.cursor))) throw new Error("workspace recovery cursor did not advance; retry pull");
+    seen.add(r.cursor);
+    if (desired.size + r.entries.length > 100000) throw new Error("workspace recovery entry limit reached; use a narrower path");
     for (const e of r.entries) desired.set(e.path, e); readCursor = r.read_cursor; cursor = r.cursor;
     if (!r.more) { final = r; break; }
   }

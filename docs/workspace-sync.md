@@ -60,3 +60,5 @@ Protect backups as private workspace data. Portable exports are subject to the e
 ## Verification
 
 `bun test client/workspace.test.ts` tests wide-commit pagination, concurrent snapshot writes, token isolation/tampering, independent replicas, cache loss, permission reconciliation, retry recovery and preservation of local edits. The smoke core runs `scripts/workspace-check.ts` against a real local server, including atomic receipts/conflicts, notification pruning, destroyed sandboxes and portable export/import of external blobs. These tests use synthetic agents and data. Live hosted-platform sign-in and wake behavior still require platform-specific validation.
+
+The reference client refuses non-advancing or cyclic cursors, limits recovery to 1,000 pages / 100,000 entries, and bounds server-requested snapshot resets. Use a narrower path for a larger replica. An incomplete traversal never advances the saved checkpoint. If an acknowledgement response is lost, retrying from the saved checkpoint is safe; publication retries keep the same durable operation ID.
