@@ -3549,7 +3549,9 @@ chmod -R u+w $UH/.kitebook-server $TN/mh $T/srv 2>/dev/null || true; rm -rf $UH/
 # Fake Mac like update-path's: a clone at afa48a4 (runner with no watcher), origin/main = this commit, the server still on cf dev, and a
 # runner job that launchd brings back when it exits (KeepAlive, here a loop). First time: git pull + kitebook restart; then pulls alone.
 U3=$T/u3; U3P=$((PORT + 88)); U3S=$U3/relay-cf; U3C=$U3/code-kitebook; U3L=$U3/lc; U3D=$U3/upstream; mkdir -p $U3L $U3/Library/LaunchAgents $U3/Library/Logs $U3/.cloudflared $U3/proj $U3S
-git init -q --bare $U3/origin.git && git push -q $U3/origin.git HEAD:refs/heads/main && git clone -q -b main $U3/origin.git $U3C && git -C $U3C reset -q --hard afa48a4 && ln -s $PWD/node_modules $U3C/node_modules
+# A public export starts new history. Model the same fast-forward with today's tree on the legacy fixture parent, only in this test.
+git merge-base --is-ancestor afa48a4 HEAD || HEADX=$(git commit-tree HEAD^{tree} -p afa48a4 -m 'smoke upgrade fixture')
+git init -q --bare $U3/origin.git && git push -q $U3/origin.git $HEADX:refs/heads/main && git clone -q -b main $U3/origin.git $U3C && git -C $U3C reset -q --hard afa48a4 && ln -s $PWD/node_modules $U3C/node_modules
 git clone -q -b main $U3/origin.git $U3D && git -C $U3D config user.name up && git -C $U3D config user.email up@x && git -C $U3C config user.name me && git -C $U3C config user.email me@x
 git archive afa48a4 | tar -x -C $U3S; ln -s $PWD/node_modules $U3S/node_modules; cp -r $T/oldstate $U3S/.relay-data; U3ADM="old-admin-$(openssl rand -hex 8)"; echo "ADMIN_TOKEN=$U3ADM" > $U3S/.dev.vars
 git -C $U3/proj init -q -b main && echo hi > $U3/proj/a && git -C $U3/proj add -A && git -C $U3/proj -c user.name=t -c user.email=t@t commit -qm i
