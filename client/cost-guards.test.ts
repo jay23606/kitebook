@@ -53,3 +53,17 @@ test("server dispatch and peer capabilities preserve catalog provenance and owne
     authoritative=true;await expect(sp.checkAgentModel("mac",{agent:"codex",model:"new-model"})).rejects.toThrow("models: older-model");
   }finally{db.close();}
 });
+test("duplicate runner-failure deliveries cannot consume retries twice, and the task stops at its retry limit",async()=>{
+  const {SpaceTasks}=await import("../src/space/tasks.ts"),{db,sp}=fixture(SpaceTasks.prototype);let events=0;
+  db.run("create table tasks(id text primary key,state text,attempt integer,max_retries integer,attempts text,result text,updated text,held_since text,held_acc integer);create table task_live(task_id text)");
+  db.run("insert into tasks(id,state,attempt,max_retries) values('job','running',1,2)");
+  sp.sql.exec=(q:string,...a:any[])=>{const rows=db.query(q).all(...a),n=(db.query("select changes() n").get() as any).n;return {toArray:()=>rows,one:()=>rows[0],rowsWritten:n};};
+  sp.loadTask=()=>{const t:any=db.query("select * from tasks where id='job'").get();return {...t,attempts:JSON.parse(t.attempts??"[]")};};
+  sp.emit=()=>{events++;};sp.setState=(_t:any,state:string)=>db.query("update tasks set state=? where id='job'").run(state);
+  try {const first=sp.loadTask();sp.failOrRetry(first,{id:"runner"},{summary:"crashed",reason:"runner_crash"},{},["running"]);
+    expect(sp.loadTask().attempt).toBe(2);expect(events).toBe(2);
+    expect(()=>sp.failOrRetry(first,{id:"runner"},{summary:"duplicate",reason:"runner_crash"},{},["running"])).toThrow("task is queued");expect(sp.loadTask().attempt).toBe(2);expect(events).toBe(2);
+    db.run("update tasks set state='running'");sp.failOrRetry(sp.loadTask(),{}, {summary:"again",reason:"runner_crash"},{},["running"]);expect(sp.loadTask().attempt).toBe(3);
+    db.run("update tasks set state='running'");sp.failOrRetry(sp.loadTask(),{}, {summary:"last",reason:"runner_crash"},{},["running"]);expect(sp.loadTask().state).toBe("failed");expect(events).toBe(4);
+  }finally{db.close();}
+});
