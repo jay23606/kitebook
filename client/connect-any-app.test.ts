@@ -34,3 +34,13 @@ test("agent guide: POST /connect {agent,name} is the first way to connect; the c
   const line = g.split("\n").find(l => l.startsWith("- No token yet?"))!;
   expect(line.indexOf("/connect")).toBeLessThan(line.indexOf("device_authorization")); expect(line).toMatch(/Legacy/);
 });
+
+test("OAuth display-name collisions never reuse another client's connected-app identity", async () => {
+  const { Database } = await import("bun:sqlite"), { namePlan } = await import("../src/oauth.ts"), db = new Database(":memory:");
+  db.exec("create table peers(id text primary key,name text,revoked integer); create table oauth_peers(peer_id text); create table oauth_families(peer_id text,client_id text,revoked integer)");
+  db.exec("insert into peers values('p','trusted',0); insert into oauth_peers values('p'); insert into oauth_families values('p','original-client',0)");
+  const d = { sql: { exec(q: string, ...args: any[]) { return { toArray: () => db.prepare(q).all(...args) }; } } } as any;
+  expect(namePlan(d, "trusted", true, "original-client")).toEqual({ name: "trusted", replace: true, taken: true });
+  expect(namePlan(d, "trusted", true, "different-client")).toEqual({ name: "trusted-2", replace: false, taken: true });
+  expect(namePlan(d, "trusted", false, "original-client").name).toBe("trusted-2"); db.close();
+});

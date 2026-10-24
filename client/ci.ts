@@ -3,6 +3,7 @@
 // throwaway worktree of that exact commit, nice'd, with a timeout, one run per machine; a newer commit cancels the older run of that branch.
 // Only the project's own origin, never a fork. Results go to the server (ci_report); a GitHub commit status only when the owner asks.
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
+import { stopProcessTree } from "./execution-process.ts";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import { homedir, tmpdir } from "os";
@@ -98,11 +99,11 @@ export async function runJob(r: Run, signal: AbortSignal, o: { dir: string; time
     const cmd = ciCommand(wt); if (!cmd) return { state: "skipped", sha: got.sha, why: "no test command (kitebook.json ci or package.json test)" };
     if (existsSync(join(o.dir, "node_modules")) && !existsSync(join(wt, "node_modules"))) try { symlinkSync(join(o.dir, "node_modules"), join(wt, "node_modules"), "dir"); } catch {}
     const argv = process.platform === "win32" ? ["cmd", "/d", "/s", "/c", cmd] : ["nice", "-n", "10", "sh", "-c", cmd];
-    const p = Bun.spawn(argv, { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CI: "1", KITEBOOK_CI: "1" } });
-    let timedOut = false; const kill = () => { try { p.kill("SIGTERM"); setTimeout(() => { try { p.kill("SIGKILL"); } catch {} }, 5000); } catch {} };
+    const p = Bun.spawn(argv, { cwd: wt, detached: process.platform !== "win32", stdout: "pipe", stderr: "pipe", env: { ...process.env, CI: "1", KITEBOOK_CI: "1" } });
+    let timedOut = false; const kill = () => { stopProcessTree(p.pid, "SIGTERM", true); setTimeout(() => stopProcessTree(p.pid, "SIGKILL", true), 5000); };
     const tm = setTimeout(() => { timedOut = true; kill(); }, o.timeoutMs); signal.addEventListener("abort", kill, { once: true });
     const cap = async (s: ReadableStream) => { let out = ""; for await (const c of s as any) { out += new TextDecoder().decode(c); if (out.length > 400_000) out = out.slice(-200_000); } return out; };
-    const [so, se] = await Promise.all([cap(p.stdout as any), cap(p.stderr as any)]); const code = await p.exited; clearTimeout(tm);
+    const [so, se] = await Promise.all([cap(p.stdout as any), cap(p.stderr as any)]); const code = await p.exited; clearTimeout(tm); signal.removeEventListener("abort", kill);
     const log = (so + "\n" + se).replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""), tp = parseTests(log), tail = log.split("\n").map(l => l.trimEnd()).filter(Boolean).slice(-20);
     if (signal.aborted) return { state: "cancelled", sha: got.sha, cmd, secs: secs(), tail };
     if (timedOut) return { state: "error", sha: got.sha, cmd, secs: secs(), tail, ...tp, why: `timed out after ${Math.round(o.timeoutMs / 60000)} min` };

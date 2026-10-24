@@ -16,6 +16,7 @@ import { deviceFns } from "./devices.ts";
 import { deviceCookies } from "./session.ts";
 import type { Kysely } from "kysely";
 import { decodeJwt } from "jose";
+import { GrantTokens } from "./auth-grants.ts";
 type Lib = typeof import("./auth-lib.ts"); // the Better Auth stack, imported on first use (ba() below)
 let LIB: Promise<Lib> | null = null;
 const lib = () => LIB ??= import("./auth-lib.ts");
@@ -180,15 +181,15 @@ function liveFamily(d: D, clientId: string) {
   return d.sql.exec("select f.id from oauth_families f join peers p on p.id=f.peer_id where f.client_id=? and f.source='consent' and f.revoked=0 and p.revoked=0 and (p.expires is null or p.expires>?) order by f.created desc limit 1", clientId, Date.now()).toArray()[0] as any;
 }
 // Resource-server check for /mcp, /v1, the WebSocket and events: the JWT (this Dir's own JWKS, in-process; issuer; audience = this account's
-// /mcp; expiry), then the grant, every call. A removed app gets 401 here at once, whatever its token's expiry says.
+// /mcp; expiry), then its immutable issuing grant, every call. A removed app gets 401 here at once, whatever its token's expiry says.
 export async function authJwt(d: D, origin: string, token: string): Promise<{ peer: any; caps: any[] } | { error: string }> {
   const b = await ba(d, origin); let c: any;
   try { ({ payload: c } = await b.L.jwtVerify(token, b.L.createLocalJWKSet(await b.auth.api.getJwks()), { issuer: origin + authBase(d.acct), audience: origin + mcpPath(d.acct) })); }
   catch (e: any) { // jose checks the signature, issuer and audience before expiry, so an expired token's payload is ours: a removed app hears "removed"
     if (e?.code !== "ERR_JWT_EXPIRED") return { error: "this token isn't valid here" };
-    return { error: liveFamily(d, String(e.payload?.azp ?? e.payload?.client_id ?? "")) ? "this sign-in expired; the app refreshes it by itself, or sign it in again" : REMOVED }; }
-  const f = liveFamily(d, String(c.azp ?? c.client_id ?? ""));
-  if (!f) return { error: REMOVED };
+    return { error: await new GrantTokens(d.sql).get("access", token, true) ? "this sign-in expired; the app refreshes it by itself, or sign it in again" : REMOVED }; }
+  const f = await new GrantTokens(d.sql).get("access", token);
+  if (!f || f.client_id !== String(c.azp ?? c.client_id ?? "")) return { error: REMOVED };
   const r = await OAUTH_FNS.authFamily(d, f.id);
   return r ?? { error: REMOVED };
 }
@@ -213,7 +214,22 @@ export async function authFetch(d: D, req: Request): Promise<Response> {
     if (p.endsWith("/oauth2/register") && req.method === "POST") { // who may sign itself up (registering grants nothing; the owner's consent does)
       const why = dcrRefusal(await req.clone().json().catch(() => ({})), knobs(d.env).dcrMode); if (why) return json({ error: "access_denied", error_description: why }, 403);
     }
-    const r = nt ? await nt.after(await b.auth.handler(nt.req)) : await b.auth.handler(req);
+    const tr = nt?.req ?? req;
+    // Bind at code issuance, not by whichever grant happens to be newest when an exchange finishes.
+    let binding: { id: string; client_id: string } | null = null;
+    if (p.endsWith("/oauth2/token") && req.method === "POST") {
+      const raw = await tr.clone().text(), form = (tr.headers.get("content-type") ?? "").includes("application/json") ? JSON.parse(raw || "{}") : Object.fromEntries(new URLSearchParams(raw));
+      const kind = form.grant_type === "authorization_code" ? "code" : form.grant_type === "refresh_token" ? "refresh" : null;
+      binding = kind ? await new GrantTokens(d.sql).get(kind, String(kind === "code" ? form.code ?? "" : form.refresh_token ?? "")) : null;
+      if (!binding || (form.client_id && form.client_id !== binding.client_id)) return json({ error: "invalid_grant", error_description: "This sign-in has ended or predates this update. Connect the app again." }, 400);
+    }
+    const r = nt ? await nt.after(await b.auth.handler(tr)) : await b.auth.handler(tr);
+    if (binding && r.ok) {
+      const tokens: any = await r.clone().json(), claims = decodeJwt(tokens.access_token), bound = new GrantTokens(d.sql);
+      if (String(claims.azp ?? claims.client_id ?? "") !== binding.client_id) throw new Error("OAuth token client mismatch");
+      await bound.keep("access", tokens.access_token, binding.id, Number(claims.exp) * 1000);
+      if (tokens.refresh_token) await bound.keep("refresh", tokens.refresh_token, binding.id, Date.now() + knobs(d.env).refreshTtl * 1000);
+    }
     if (p.includes("/.well-known/oauth-authorization-server") && r.ok) return await withDevice(r, o);
     if (p.endsWith("/oauth2/register") && r.status < 300) await sweepClients(d, b).catch(() => {}); // every registration sweeps the ones never used
     if (r.status === 429 && r.headers.get("x-retry-after")) { const h = new Headers(r.headers); h.set("retry-after", r.headers.get("x-retry-after")!); return new Response(r.body, { status: 429, headers: h }); }
@@ -272,12 +288,13 @@ async function consent(d: D, b: BA, req: Request, url: URL): Promise<Response> {
     if (!ses) return Response.redirect(`${url.origin}${startPath(d.acct)}?${url.searchParams}`, 302);
     const q = url.searchParams, clientId = q.get("client_id") ?? "", client = await clientInfo(b, clientId);
     if (!client) return new Response("This app isn't known to this Kitebook. Start connecting again from the app.\n", { status: 400, headers: { "content-type": "text/plain; charset=utf-8" } });
-    if (liveFamily(d, clientId)) { // known app (a grant the owner can see and remove in Settings): no page
-      const r = await forward(b, req, url, true), to = await noteCode(d, clientId, r.url); return to ? Response.redirect(to, 302) : json(r.body, r.status);
+    const family = liveFamily(d, clientId);
+    if (family) { // known app (a grant the owner can see and remove in Settings): no page
+      const r = await forward(b, req, url, true), to = await grantCode(d, clientId, family.id, r.url); return to ? Response.redirect(to, 302) : json(r.body, r.status);
     }
     const pol: any = await d.admin("policy", { space: "main" }).then((r: any) => r.spaces[0]).catch(() => null);
     const runners: any[] = pol?.runners ?? [], machine = (runners.find(r => r.online) ?? runners[0])?.name ?? null;
-    const plan = (() => { try { return OAUTH_FNS.namePlan(d, slug(client.name), true); } catch { return null; } })(), n = rnd(16);
+    const plan = (() => { try { return OAUTH_FNS.namePlan(d, slug(client.name), true, clientId); } catch { return null; } })(), n = rnd(16);
     const ui = { c: { id: clientId, name: client.name, self: client.self, auto: autoInfo(d, clientId) }, redirect: q.get("redirect_uri") ?? "", acct: d.acct, projects: pol?.projects ?? [], plan, machine, query: url.search.slice(1), space: "main" };
     return html(authPage("Connect " + client.name, consentBody(ui), OWNER_JS + consentJs, n), n);
   }
@@ -306,7 +323,7 @@ async function consent(d: D, b: BA, req: Request, url: URL): Promise<Response> {
   catch (e: any) { const m = String(e?.message ?? e).match(/^oauth:([a-z_]+):(.*)$/s); return json({ error: m?.[1] ?? "invalid_request", error_description: m?.[2] ?? String(e?.message ?? e) }, m?.[1] === "rate_limited" ? 429 : 400); }
   const r = await forward(b, req, url, true, a.oauth_query);
   if (!r.url) { await killFamily(d, g.family, "consent not completed"); return json(r.body, r.status); }
-  return json({ ok: true, redirect: await noteCode(d, clientId, r.url), peer: g.name, space: String(a.space || "main"), granted: grantSummary(client.name, ch.verbs, ch.paths) });
+  return json({ ok: true, redirect: await grantCode(d, clientId, g.family, r.url), peer: g.name, space: String(a.space || "main"), granted: grantSummary(client.name, ch.verbs, ch.paths) });
 }
 async function clientInfo(b: BA, clientId: string): Promise<{ name: string; self: boolean } | null> {
   if (!clientId) return null;
@@ -315,6 +332,10 @@ async function clientInfo(b: BA, clientId: string): Promise<{ name: string; self
   const name = String(c.name ?? c.clientName ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "").replace(/\s+/g, " ").trim().slice(0, 60) || "MCP client";
   // a CIMD client's name comes from a document at its own https address (the host is shown); a self-registered one names itself
   return { name, self: !/^https:\/\//.test(clientId) };
+}
+async function grantCode(d: D, clientId: string, family: string, to: string | undefined) {
+  if (to) { const code = new URL(to).searchParams.get("code"); if (code) await new GrantTokens(d.sql).keep("code", code, family, Date.now() + 15 * 60_000); }
+  return noteCode(d, clientId, to);
 }
 // Better Auth's own consent endpoint, as this browser (cookie + origin); then its consent row goes, so the next sign-in comes back to us.
 async function forward(b: BA, req: Request, url: URL, accept: boolean, query = url.search.slice(1)): Promise<{ url?: string; status: number; body: any }> {

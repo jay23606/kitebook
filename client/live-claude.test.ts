@@ -10,7 +10,7 @@ import { insideDir } from "./inside.ts"; // the runner's "edit inside the worktr
 import type { LiveEvent } from "./live-driver.ts";
 
 const T = mkdtempSync(join(tmpdir(), "live-claude-")), LOG = join(T, "sdk.jsonl"), CLAUDE = join(T, "claude"); // the "owner's claude": a process that just lives
-writeFileSync(CLAUDE, "#!/bin/sh\nexec cat >/dev/null\n"); chmodSync(CLAUDE, 0o755);
+writeFileSync(CLAUDE, "#!/bin/sh\nwhile IFS= read -r line; do :; done\n"); chmodSync(CLAUDE, 0o755);
 let F: any;
 beforeAll(async () => { process.env.FAKE_CLAUDE_SDK_DIR = join(T, "sessions"); process.env.FAKE_CLAUDE_SDK_LOG = LOG; F = await import("../scripts/fake-claude-sdk.ts"); });
 const deps = (x: Partial<ClaudeDeps> = {}): ClaudeDeps => ({ claude: () => CLAUDE, version: async () => "2.1.309 (Claude Code)", sdk: async () => F, agents: async () => [], ...x });
@@ -42,6 +42,14 @@ test("ANTHROPIC_API_KEY stays only when runner.json opts in; read-only runs in p
   const s = await claudeDriver(deps({ apiKey: () => true })).start({ cwd: T, readOnly: true, env: { ANTHROPIC_API_KEY: "sk-y" } });
   await drain(s.prompt("x")); const q = logged().filter(x => x.query).at(-1).query;
   expect(q.env.ANTHROPIC_API_KEY).toBe("sk-y"); expect(q.permissionMode).toBe("plan"); await s.close();
+});
+
+test("read-only sessions deny commands, edits and MCP without asking the owner", async () => {
+  const s = await claudeDriver(deps()).start({ cwd: T, readOnly: true });
+  try { for (const tool of ["Bash", "Edit", "mcp__github__create_issue"]) {
+    const a = await drain(s.prompt(`tool ${tool} blocked`)); expect(a.some(e => e.approval)).toBe(false); expect(texts(a)[0]).toContain("Read-only questions"); }
+    const q = logged().filter(x => x.query).at(-1).query; expect(q.tools).toEqual(["Read", "Glob", "Grep", "LS"]); expect(q.strictMcpConfig).toBe(true); expect(q.mcpServers).toEqual({});
+  } finally { await s.close(); }
 });
 
 test("a mid-turn steer (now) is read in the same turn; other steers wait for the next prompt", async () => {

@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, chmodSync, readFileSync, existsSync } from 
 import { join } from "path";
 import { tmpdir } from "os";
 import { setCfg } from "./runner-ctx.ts";
-import { driver, mapNote, sandboxFor, parseVersion, activeWriter, RpcError } from "./live-codex.ts";
+import { driver, mapNote, sandboxFor, codexReadOnlyArgv, parseVersion, activeWriter, RpcError } from "./live-codex.ts";
 import { liveFor, liveBroken, registerLive, liveOff, type LiveEvent, type LiveSession } from "./live-driver.ts";
 import { codexAskArgv } from "./runner-ask.ts";
 
@@ -97,6 +97,19 @@ test("under Kitebook's wrapper the sandbox is external: a fake nested Seatbelt f
   try { const evs = await collect(wrapped.prompt("read only question")); expect(evs.some(e => e.err)).toBe(false); expect(said(evs)).toContain("echo:"); } finally { await wrapped.close(); }
   const own = await driver.start({ cwd: WT, env: { ...env(), FAKE_SEATBELT: "1" }, readOnly: true }); // Codex's own sandbox under a Seatbelt: the bug
   try { const evs = await collect(own.prompt("read only question")); expect(evs.find(e => e.err)?.err).toMatch(/sandbox_apply/); } finally { await own.close(); }
+});
+
+test("the CLI fallback uses the same external-tool restrictions and refuses unsupported config probes", async () => {
+  const argv = await codexReadOnlyArgv([join(BIN, "codex"), "exec", "--sandbox", "read-only", "{prompt}"], WT, env());
+  expect(argv).toContain("exec"); expect(argv.join(" ")).toContain('"write_test" = { "enabled" = false }');
+  await expect(codexReadOnlyArgv(["no-such-codex", "exec"], WT, { PATH: "/nonexistent" })).rejects.toThrow();
+});
+
+test("a read-only live session disables MCP and app tools in the effective config", async () => {
+  const s = await driver.start({ cwd: WT, env: env(), readOnly: true });
+  try { expect(sent("thread/start").at(-1).params.config).toMatchObject({ mcp_servers: { write_test: { enabled: false } }, apps: { app_test: { enabled: false } } });
+    await collect(s.prompt("read only")); expect(sent("turn/start").at(-1).params.approvalPolicy).toBe("never");
+  } finally { await s.close(); }
 });
 
 test("resume of a thread open elsewhere forks; fork never touches the source; listSessions filters by cwd", async () => {

@@ -58,6 +58,7 @@ function handle(m: any) {
   switch (method) {
     case "initialize": return ok({ userAgent: "kitebook/0.163.0 (fake)", codexHome: "/tmp/fake-codex", platformFamily: "unix", platformOs: "linux" });
     case "initialized": return;
+    case "config/read": return ok({ config: { mcp_servers: { write_test: { command: "fake-mcp" } }, apps: { app_test: { enabled: true } } } });
     case "thread/start": thread = `th_${process.pid}_${++n}`; ok(thr(thread)); return note("thread/started", { thread: threadObj(thread) });
     case "thread/resume": if (String(p.threadId).startsWith("owner-open")) return err(-32600, `thread ${p.threadId} already has an active writer`);
       thread = p.threadId; return ok(thr(thread!));

@@ -2,7 +2,7 @@
 // queued one and cancels the running one), fork refusal, the repo's own test command, a real run in a throwaway worktree (pass, fail,
 // skip, cleaned up), and the runner side following the owner-signed Experimental state. Run: bun test client/ci.test.ts
 import { test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { CiQueue, forkWhy, ciCommand, runJob, resolveSha, watched, startCi, parseTests, type Run } from "./ci.ts";
@@ -70,6 +70,21 @@ test("a run: a throwaway worktree of exactly that commit, its own command, pass 
   expect(git(r.work, "worktree", "list").split("\n").length).toBe(1); // every throwaway worktree is gone
   expect(existsSync(join(r.home, ".kitebook", "ci.lockdir"))).toBe(false); // the machine slot is free again
 });
+
+(process.platform === "win32" ? test.skip : test)("a CI timeout stops the child process tree and releases the machine slot", async () => {
+  const r = repo(), marker = join(r.d, "child.pid");
+  writeFileSync(join(r.up, "kitebook.json"), JSON.stringify({ ci: `sh -c 'sleep 60 & echo $! > "${marker}"; wait'` }));
+  git(r.up, "add", "."); git(r.up, "commit", "-qm", "slow test"); git(r.up, "push", "-q", "origin", "HEAD:dev"); git(r.work, "fetch", "-q", "origin");
+  const started = Date.now(), run = { ...job("dev", (resolveSha(r.work, "dev") as any).sha), state: "queued" as const, passed: null, failed: null, secs: null, tail: [], cmd: null, why: null, at: 0 };
+  const result = await runJob(run, new AbortController().signal, { dir: r.work, home: r.home, timeoutMs: 200 });
+  expect(result.state).toBe("error"); expect(result.why).toContain("timed out"); expect(Date.now() - started).toBeLessThan(5000);
+  expect(existsSync(join(r.home, ".kitebook/ci.lockdir"))).toBe(false);
+  const child = Number(readFileSync(marker, "utf8"));
+  const alive = () => { try { process.kill(child, 0); // An exited child can briefly be a zombie while init reaps it.
+    return process.platform !== "linux" || !readFileSync(`/proc/${child}/stat`, "utf8").includes(") Z "); } catch { return false; } };
+  for (let i = 0; i < 50 && alive(); i++) await new Promise(ok => setTimeout(ok, 20));
+  expect(alive()).toBe(false);
+}, 10000);
 
 test("the runner side: nothing runs with Experimental off; on, a push to the watched branch is tested and reported; asks are taken", async () => {
   const r = repo(), calls: any[] = [], audits: any[] = []; let asks: any[] = [];

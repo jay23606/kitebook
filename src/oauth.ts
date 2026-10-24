@@ -126,10 +126,11 @@ function freeName(d: D, base: string) {
   for (let i = 2; i < 100; i++) { const n = `${base.slice(0, 31 - String(i).length)}-${i}`; if (!row(d, "select 1 as x from peers where name=?", n)) return n; }
   return fail("invalid_request", `Too many connections are named ${base}. Remove some on /start, Status.`);
 }
-export function namePlan(d: D, name: string, replace?: boolean): { name: string; replace: boolean; taken: boolean } {
+export function namePlan(d: D, name: string, replace?: boolean, clientId?: string): { name: string; replace: boolean; taken: boolean } {
   if (!NAME_RE.test(name ?? "")) fail("invalid_request", "Name: lowercase letters, digits, - or _ (up to 32), for example pi");
   const p = row(d, "select id, revoked from peers where name=?", name); if (!p) return { name, replace: false, taken: false };
-  const live = !p.revoked && !!row(d, "select 1 as x from oauth_peers where peer_id=?", p.id);
+  const live = !p.revoked && !!row(d, "select 1 as x from oauth_peers where peer_id=?", p.id)
+    && (!clientId || !!row(d, "select 1 from oauth_families where peer_id=? and client_id=? and revoked=0", p.id, clientId));
   return live && replace !== false ? { name, replace: true, taken: true } : { name: freeName(d, name), replace: false, taken: true };
 }
 // what a choice lets the app do, in one plain sentence (the consent page, the phone page and `kitebook approve` all say the same)
@@ -170,7 +171,7 @@ const acctFns = {
     if (!KINDS.includes(a.kind)) fail("invalid_request", "kind: " + KINDS.join("|"));
     if (!a.verbs?.length || a.verbs.some(v => !VERBS.includes(v))) fail("invalid_scope", "verbs: " + VERBS.join(","));
     if (!row(d, "select 1 as x from spaces where id=?", a.space)) fail("invalid_scope", "no space " + a.space);
-    const plan = a.replace === undefined ? (() => { const x = namePlan(d, a.name, true); return { ...x, replace: false, reuse: x.replace }; })() : { ...namePlan(d, a.name, a.replace), reuse: false };
+    const plan = a.replace === undefined ? (() => { const x = namePlan(d, a.name, true, a.client_id); return { ...x, replace: false, reuse: x.replace }; })() : { ...namePlan(d, a.name, a.replace, a.client_id), reuse: false };
     if (plan.replace) { const pid = row(d, "select id from peers where name=?", plan.name).id; // the same app connecting again: its old sign-ins end now
       for (const f of d.sql.exec("select id from oauth_families where peer_id=? and revoked=0", pid).toArray() as any[]) await killFamily(d, f.id, "replaced by a new connection of the same app"); }
     a = { ...a, name: plan.name };
@@ -181,7 +182,7 @@ const acctFns = {
     d.sql.exec("insert into oauth_families(id,peer_id,client_id,space,verbs,source,created) values(?,?,?,?,?,?,?)", id, pid, a.client_id, a.space, JSON.stringify(a.verbs), a.source, new Date().toISOString());
     return { family: id, name: a.name };
   },
-  namePlan(d: D, name: string, replace?: boolean) { return namePlan(d, name, replace); },
+  namePlan(d: D, name: string, replace?: boolean, clientId?: string) { return namePlan(d, name, replace, clientId); },
   // ---- sign-in requests (kitebook approve <code>, or a signed-in browser) ----
   // a browser asking to sign in to /start (the "Send a sign-in request to my phone" button): the same request, kind login, no app access;
   // approved on the phone / `kitebook approve` (via the runner) or by a browser already signed in, it signs that browser in for 30 days

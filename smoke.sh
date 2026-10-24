@@ -929,7 +929,7 @@ cat > $T/fleet.json <<FJ
  "projects":{"ps":{"path":"$PS","agent":"sp","verify":["test -f spec_ok.txt","test -f plan_done.txt","test -f never.txt","nosuchtool-xyz --check"]},"pq":{"path":"$PQ","agent":"ask"},"pg":{"path":"$PG","agent":"steer"},"pr":{"path":"$PR","agent":"fix","verify":["test -f fixed.txt"]},"pa":{"path":"$PA","agent":"par"},"pb":{"path":"$PB","agent":"par"},"pc":{"path":"$PC","agent":"hang"},"pd":{"path":"$PD","agent":"deps"},"pe":{"path":"$PE","agent":"live"},"pf":{"path":"$PF","agent":"pi","verify":["sleep 3 && test -f pi.txt"]},"pm":{"path":"$PM","agent":"gemini"}}}
 FJ
 KITEBOOK_TEST=1 HOME=$T PATH="$T/fakepi:$PATH" bun client/runner.ts $T/fleet.json > $T/fleet.log 2>&1 & RF=$!
-for i in $(seq 1 20); do h cat shared/runners/fleet.json 2>/dev/null | jq -e '.models.mdl' >/dev/null 2>&1 && break; sleep 0.5; done
+for i in $(seq 1 20); do h cat shared/runners/fleet.json > $T/fleet-cap.json 2>/dev/null && jq -e '.models.mdl' $T/fleet-cap.json >/dev/null 2>&1 && break; sleep 0.5; done
 h cat shared/runners/fleet.json | jq -e '.models.mdl==["fast-1","smart-2"] and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
 h task_create --target fleet --title x --instructions y --project pa --agent mdl --model nope 2>&1 | grep -q "models: fast-1, smart-2" || die "bad model"
 h task_create --target fleet --title x --instructions y --project pa --agent nope 2>&1 | grep -q "agents: pi, codex, claude" || die "bad agent"
@@ -2559,7 +2559,7 @@ pw shared/preset.md | jq -e .ok >/dev/null && pw notes/preset.md | grep -q "no w
   && curl -s -X POST $O/v1/task_list -H "authorization: Bearer $PA" -H 'content-type: application/json' -d '{}' | jq -e .ok >/dev/null || die "preset scope"
 TK=$(curl -s -X POST $AS/oauth2/token -d grant_type=refresh_token -d refresh_token=$PR -d client_id=$CID -d resource=$O/mcp); PA=$(echo $TK | jq -r .access_token); FAM=$(bun client/admin.ts grants | jq -r '[.grants[]|select(.peer=="claude-preset" and .revoked==0)][-1].id')
 echo $TK | jq -e '.refresh_token_expires_in==2592000 and .refresh_token!="'$PR'"' >/dev/null && [ -n "$FAM" ] && [ "$(code401 $PA)" = 200 ] && pass "refresh slides: each rotation gets a fresh 30-day refresh token" || { echo $TK; die "sliding refresh"; }
-# a second grant for the same app (another sign-up named the same) keeps its subscription when the first ends; the ended grant's webhook + stream are terminated
+# a separately registered client with the same display name gets its own identity and keeps its subscription when the first ends; the ended grant's webhook + stream are terminated
 cat > $T/gh.ts <<'HOOK'
 import { appendFileSync } from "node:fs";
 Bun.serve({ port: +process.env.SP_GR!, async fetch(r) { const body = await r.text(); let j: any = {}; try { j = JSON.parse(body); } catch {}
@@ -2567,7 +2567,7 @@ Bun.serve({ port: +process.env.SP_GR!, async fetch(r) { const body = await r.tex
 HOOK
 bun $T/gh.ts $T/gh.jsonl & GHP=$!; sleep 0.5; GS="whsec_$(head -c 32 /dev/urandom | base64 -w0)"
 gsub(){ ev $1 "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"events/subscribe\",\"params\":{\"name\":\"file.changed\",\"arguments\":{\"path_glob\":\"shared/gr/**\"},\"delivery\":{\"mode\":\"webhook\",\"url\":\"http://127.0.0.1:$SP_GR/$2\",\"secret\":\"$GS\"},\"ttlMs\":60000}}"; }
-BAC root $RJ register:Claude $CB "$(echo $PRESET | jq -c 'del(.replace)')" > $T/bac2.out; PB=$(jq -r .access_token $T/bac2.out); jq -e '.peer=="claude-preset"' $T/bac2.out >/dev/null || die "second grant: $(cat $T/bac2.out)"
+BAC root $RJ register:Claude $CB "$(echo $PRESET | jq -c 'del(.replace)')" > $T/bac2.out; PB=$(jq -r .access_token $T/bac2.out); jq -e '.peer=="claude-preset-2"' $T/bac2.out >/dev/null || die "second grant: $(cat $T/bac2.out)"
 gsub $PA one | jq -e .result.id >/dev/null && gsub $PB two | jq -e .result.id >/dev/null || die "grant subs: $(gsub $PA one)"
 curl -sN $O/mcp -H "authorization: Bearer $PA" -d '{"jsonrpc":"2.0","id":"g","method":"events/stream","params":{"name":"file.changed","arguments":{}}}' > $T/gst.txt & GST=$!
 for i in $(seq 1 20); do grep -q events/active $T/gst.txt 2>/dev/null && break; sleep 0.2; done
@@ -2577,7 +2577,7 @@ kill $GST 2>/dev/null || true; h write shared/gr/a.md --content a >/dev/null; fo
 grep '"/one"' $T/gh.jsonl | grep -q terminated && grep -q events/terminated $T/gst.txt && grep '"/two"' $T/gh.jsonl | grep -q file.changed && ! grep '"/one"' $T/gh.jsonl | grep -q file.changed && [ "$(code401 $PA)" = 401 ] && [ "$(code401 $PB)" = 200 ] \
   && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $AS/oauth2/token -d grant_type=refresh_token -d refresh_token=$(echo $TK | jq -r .refresh_token) -d client_id=$CID -d resource=$O/mcp)" = 400 ] \
  || { cat $T/gh.jsonl $T/gst.txt; die "grant revoke events"; }
-curl -s -X POST $O/v1/revoke_self -H "authorization: Bearer $PB" | jq -e '.result.peer=="claude-preset" and (.result.revoked_grant|startswith("f_"))' >/dev/null && [ "$(code401 $PB)" = 401 ] \
+curl -s -X POST $O/v1/revoke_self -H "authorization: Bearer $PB" | jq -e '.result.peer=="claude-preset-2" and (.result.revoked_grant|startswith("f_"))' >/dev/null && [ "$(code401 $PB)" = 401 ] \
   && for i in $(seq 1 20); do grep '"/two"' $T/gh.jsonl | grep -q terminated && break; sleep 0.2; done && grep '"/two"' $T/gh.jsonl | grep -q terminated || die "revoke_self oauth"
 kill $GHP 2>/dev/null || true
 LV=$(bun client/admin.ts peer leaver assistant 2>/dev/null); bun client/admin.ts grant leaver main read "shared/**" >/dev/null
@@ -2940,10 +2940,11 @@ sed 's#from *"cloudflare:workers"#from "data:text/javascript,export class Durabl
 # additions, ~8 KB gzip of runner text) put dev + phone-approve at 933.2 gzip, 3236 raw
 # 938 since hosted-prep (2026-10-23): the account model groundwork (src/account-store.ts users + audit + usage counters, src/identity.ts,
 # client/account.ts) puts dev + it at 935.5 gzip, 3243 raw (raw budget unchanged)
-BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 938) && echo "$BS" | jq -e '.raw_kb < 3260' >/dev/null \
+# Immutable OAuth bindings and shared read-only/process policies measure 939.9 KB gzip / 3252.6 raw; raw cap and check count stay unchanged.
+BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 942) && echo "$BS" | jq -e '.raw_kb < 3260' >/dev/null \
   && [ "$(bun -e "await import('$T/bundle-eval.mjs'); console.log(typeof Reflect.getMetadata)")" = undefined ] \
   && grep -q 'from *"cloudflare:workers"' $BJ && [ -z "$(ls .cloudflare/output/v0/workers/default/bundle/*.js | grep -v '/index.js$')" ] \
-  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 938; was 911 before the trim), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
+  && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 942; was 911 before the trim), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
 # fix-security P0: the Mac's production server (scripts/serve.sh, what mac-host.sh runs at login) is the built bundle on workerd, data outside the
 # project folder; it carries a cf dev Kitebook over (scripts/migrate-cfdev.ts: DO SQLite as is, simulated R2 -> blobs/<sha256> + refs, hashes checked)
 SVP=$((PORT + 65)); SURL=http://127.0.0.1:$SVP; PORT=$SVP KITEBOOK_DATA=$T/srv bash scripts/serve.sh > $T/serve.log 2>&1 & SVPID=$!

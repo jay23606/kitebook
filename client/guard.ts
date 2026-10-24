@@ -22,6 +22,7 @@
 //   bun guard.ts resume [runner.json]
 //   bun guard.ts audit verify [audit.jsonl]       check the hash chain
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
+import { stopProcessTree } from "./execution-process.ts";
 import * as PL from "./platform.ts";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync, readdirSync, statSync, realpathSync, chmodSync, rmSync, openSync, readSync, closeSync, fstatSync } from "fs";
 import { COMPILED } from "./binary.ts"; // the kitebook binary: shims call `kitebook __guard` / `kitebook runner`, not a .ts path
@@ -245,12 +246,7 @@ export function onEvent(ev: any) {
   if (ev?.type === "space.resumed") { serverPaused = null; if (protect.auditLog) auditAppend({ type: "space.resumed", runner: S.me.name, peer: ev.data?.peer ?? null }); S.onChange?.(); }
 }
 
-function killTree(pid: number) {
-  if (PL.plat() === "win32") return PL.killTreeWin(pid);
-  const kids = (p: number): number[] => { const r = Bun.spawnSync(["ps", "-A", "-o", "pid=,ppid="]).stdout.toString().trim().split("\n").map(l => l.trim().split(/\s+/).map(Number));
-    const out: number[] = []; const walk = (x: number) => { for (const [c, pp] of r) if (pp === x && c !== x) { out.push(c); walk(c); } }; walk(p); return out; };
-  for (const p of [pid, ...kids(pid)]) { try { process.kill(p, "SIGKILL"); } catch {} }
-}
+const killTree = (pid: number) => stopProcessTree(pid);
 
 const PROTECTED = [/(^|\/)AGENTS\.md$/i, /(^|\/)CLAUDE\.md$/i, /(^|\/)\.github\/workflows\//, /(^|\/)\.git\/hooks\//, /(^|\/)\.(kitebook|relay)[^/]*($|\/)/, /(^|\/)runner\.json$/];
 export const isProtected = (f: string) => PROTECTED.some(r => r.test(f));

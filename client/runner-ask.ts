@@ -30,6 +30,10 @@ import { homedir, tmpdir } from "os";
 import { cfg, log, sh } from "./runner-ctx.ts";
 import { ADAPTERS, isAdapter, parseEvent } from "./agent-adapters.ts";
 import { builtOf, piHas } from "./runner-agents.ts";
+import { AGENT_CONFIG, configMounts, READ_TOOLS } from "./execution-policy.ts";
+import { stopProcessTree } from "./execution-process.ts";
+import { codexReadOnlyArgv } from "./live-codex.ts";
+export { AGENT_CONFIG } from "./execution-policy.ts";
 import { liveFor, liveBroken, type LiveDriver, type LiveSession } from "./live-driver.ts";
 
 // readOnly false: the agent's own flags don't keep it read-only. events: an exec agent whose stdout is JSON lines (the community grok-cli),
@@ -38,6 +42,7 @@ export type AskDef = { argv: string[]; protocol: "pi" | "claude" | "exec"; model
 export const ASK_PRESETS: Record<string, AskDef> = {
   pi: { argv: ["pi", "--mode", "rpc", "--no-session", "--tools", "read,grep,find,ls"], protocol: "pi", modelFlag: "--model" },
   claude: { argv: ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-mode", "plan",
+    "--tools", READ_TOOLS.join(","), "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
     "--disallowedTools", "Bash,Edit,Write,MultiEdit,NotebookEdit,WebFetch,WebSearch"], protocol: "claude", modelFlag: "--model" },
   codex: { argv: ["codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "{prompt}"], protocol: "exec", modelFlag: "-m" },
 };
@@ -76,8 +81,6 @@ export const SECRET_DIRS = [".kitebook", ".relay-runner", ".ssh", ".aws", ".gnup
 // where agents keep their own state (sessions, caches, logins): writable, so they keep working
 export const STATE_DIRS = [".claude", ".pi", ".codex", ".gemini", ".cursor", ".copilot", ".grok", ".config/opencode", ".local/share/opencode", ".local/state", ".cache", ".npm", ".bun/install/cache", "Library/Caches", "Library/Logs"];
 // ...but not the files that would change what an agent does next time (settings with hooks, instructions, extensions): read-only
-export const AGENT_CONFIG = [".claude/settings.json", ".claude/settings.local.json", ".claude/hooks", ".claude/commands", ".claude/agents", ".claude/CLAUDE.md", ".claude/plugins",
-  ".codex/config.toml", ".codex/AGENTS.md", ".pi/agent/settings.json", ".pi/agent/extensions", ".pi/agent/AGENTS.md", ".pi/agent/skills", ".gemini/settings.json", ".gemini/GEMINI.md", ".config/opencode/opencode.json"];
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 const reEsc = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&");
 // the checkout's .env files (not under node_modules / .git): hidden on Linux, where the profile can't match a pattern
@@ -85,14 +88,14 @@ function envFiles(r: string): string[] { try { return [...new Glob("**/.env*").s
 export function wrap(argv: string[], root: string, kind: string): string[] {
   const r = realpathSync(root), h = H(), q = JSON.stringify;
   if (kind === "sandbox-exec") return ["sandbox-exec", "-p", `(version 1)(allow default)(deny file-write* (subpath ${q(h)}))` + // later rules win
-    inHome(STATE_DIRS).map(p => `(allow file-write* (subpath ${q(p)}))`).join("") + `(allow file-write* (regex #"^${reEsc(h)}/\\.claude\\.json"))` +
-    inHome(AGENT_CONFIG).map(p => `(deny file-write* (subpath ${q(p)}))`).join("") + `(deny file-write* (subpath ${q(r)}))` +
+    inHome(STATE_DIRS).map(p => `(allow file-write* (subpath ${q(p)}))`).join("") +
+    [...inHome(AGENT_CONFIG), ...real(inHome(AGENT_CONFIG))].map(p => `(deny file-write* (subpath ${q(p)}))`).join("") + `(deny file-write* (subpath ${q(r)}))` +
     real(inHome(SECRET_DIRS)).map(p => `(deny file-read* file-write* (subpath ${q(p)}))`).join("") + inHome(SECRET_FILES).map(p => `(deny file-read* file-write* (literal ${q(p)}))`).join("") +
     `(deny file-read* (regex #"^${reEsc(r)}/(.*/)?\\.env[^/]*$"))`, ...argv];
   if (kind === "userns") { const ro = (p: string) => [`mount --bind ${shq(p)} ${shq(p)}`, `mount -o remount,bind,ro ${shq(p)}`];
     // agent state dirs become their own (writable) mounts first; then home is rbound and only its top mount made read-only, so they stay writable
     const steps = [...real(inHome(STATE_DIRS)).map(p => `mount --bind ${shq(p)} ${shq(p)}`), `mount --rbind ${shq(h)} ${shq(h)}`, `mount -o remount,bind,ro ${shq(h)}`, ...(r.startsWith(h + "/") || r === h ? [] : ro(r)),
-      ...real(inHome(AGENT_CONFIG)).flatMap(ro), ...(r.startsWith(h + "/") ? ro(r) : []), // their settings / hooks read-only; the checkout read-only (even inside a state dir)
+      ...configMounts(inHome(AGENT_CONFIG)).flatMap(ro), ...(r.startsWith(h + "/") ? ro(r) : []), // their settings / hooks read-only; the checkout read-only (even inside a state dir)
       ...real(inHome(SECRET_DIRS)).map(p => `mount -t tmpfs -o size=64k,mode=0500 none ${shq(p)}`), ...[...real(inHome(SECRET_FILES)), ...envFiles(r)].map(p => `mount --bind /dev/null ${shq(p)}`),
       `cd ${shq(r)}`, // re-enter: the old cwd still points at the writable mount
       `exec unshare --user --map-user=${process.getuid!()} --map-group=${process.getgid!()} -- "$@"`];
@@ -109,7 +112,7 @@ export function codexAskArgv(argv: string[], kind: string): string[] {
 
 // ---- warm sessions ----
 const textOf = (c: any): string => typeof c === "string" ? c : Array.isArray(c) ? c.filter((b: any) => b?.type === "text").map((b: any) => b.text).join("\n") : "";
-function killGroup(pid: number) { const k = (s: NodeJS.Signals) => { try { process.kill(-pid, s); } catch {} try { process.kill(pid, s); } catch {} }; k("SIGTERM"); setTimeout(() => k("SIGKILL"), 2000); }
+function killGroup(pid: number) { stopProcessTree(pid, "SIGTERM", true); setTimeout(() => stopProcessTree(pid, "SIGKILL", true), 2000); }
 type Turn = { partial: string; final: string; done: (text: string) => void; fail: (e: string) => void; onPartial: (s: string) => void };
 class Warm {
   proc: any; turn: Turn | null = null; turns = 0; dead = false; idle: any = null; queue: Promise<any> = Promise.resolve(); last = Date.now(); err = "";
@@ -201,7 +204,8 @@ export async function ask(o: { key: string; root: string; def: AskDef; agent: st
     const mi = argv.indexOf("{model}"); // adapters: "--model {model}" sits before the prompt flag; dropped with no model
     if (mi >= 0) { if (o.model) argv[mi] = o.model; else argv.splice(mi > 0 && argv[mi - 1].startsWith("-") ? mi - 1 : mi, mi > 0 && argv[mi - 1].startsWith("-") ? 2 : 1); }
     else if (flag) { const i = o.def.argv.indexOf("{prompt}"); argv.splice(i < 0 ? argv.length : i, 0, flag, o.model!); }
-    if (o.agent === "codex" && !cfg.askAgents?.codex) argv = codexAskArgv(argv, kind); // no nested Seatbelt (see codexAskArgv)
+    if (o.agent === "codex" && !cfg.askAgents?.codex) try { argv = await codexReadOnlyArgv(codexAskArgv(argv, kind), o.root, o.env); }
+    catch (e: any) { return { ok: false, text: "", error: `Can't isolate Codex's external tools for this read-only question: ${e.message}. Update Codex or send an approved task instead.`, session: "", warm: false, turn: 0, sandbox: kind, ms: Date.now() - started }; }
     const p = PL.spawn(wrap(argv, o.root, kind), { cwd: o.root, env: o.env, stdout: "pipe", stderr: "pipe", detached: true } as any); let timedOut = false;
     o.abort.kill = () => killGroup(p.pid); const tm = setTimeout(() => { timedOut = true; killGroup(p.pid); }, o.timeoutMs);
     let [so, se] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]); clearTimeout(tm);

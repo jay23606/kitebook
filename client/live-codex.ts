@@ -21,10 +21,19 @@
 // exited between turns.
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
 import * as PL from "./platform.ts";
+import { codexReadOnlyConfig, codexConfigArgv } from "./execution-policy.ts";
 import { cfg } from "./runner-ctx.ts";
 import { EventQueue, type LiveDriver, type LiveSession, type LiveStart, type LiveEvent } from "./live-driver.ts";
 import type * as T from "./live-codex-types.ts";
 
+// CLI fallback and the live driver resolve the same effective config, including project layers. Failure refuses the question.
+export async function codexReadOnlyArgv(argv: string[], cwd: string, env: Record<string, string>): Promise<string[]> {
+  const rpc = new Rpc([argv[0], "app-server"], cwd, env);
+  try { await rpc.request("initialize", { clientInfo: { name: "kitebook_readonly", title: "Kitebook", version: "1" }, capabilities: { experimentalApi: false } }); rpc.notify("initialized");
+    const r = await rpc.request<any>("config/read", { cwd, includeLayers: false });
+    return [...argv.slice(0, 2), ...codexConfigArgv(codexReadOnlyConfig(r.config)), ...argv.slice(2)];
+  } finally { rpc.close(); }
+}
 const s1 = (x: any, n = 160) => String(x ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 export const VERSION_MIN = [0, 146, 0]; // thread writer locks (an open owner thread can't be resumed by a second writer) + stable thread/fork
 export const parseVersion = (s: string) => { const m = s.match(/(\d+)\.(\d+)\.(\d+)/); return m ? [+m[1], +m[2], +m[3]] : null; };
@@ -109,7 +118,8 @@ class CodexSession implements LiveSession {
     rpc.notify("initialized");
   }
   async open() { // a new thread, a resume of Kitebook's own thread, or a fork (owner sessions)
-    const o = this.o, common = { cwd: o.cwd, model: o.model ?? null, approvalPolicy: approvalsFor(o) };
+    const o = this.o, config = o.readOnly ? codexReadOnlyConfig((await this.rpc.request<any>("config/read", { cwd: o.cwd, includeLayers: false })).config) : null;
+    const common = { cwd: o.cwd, model: o.model ?? null, approvalPolicy: approvalsFor(o), ...(config ? { config } : {}) };
     const fork = (threadId: string, lastTurnId?: string) => this.rpc.request<T.ThreadResponse>("thread/fork", { threadId, lastTurnId: lastTurnId ?? null, ...common, excludeTurns: true } satisfies T.ThreadForkParams);
     let r: T.ThreadResponse;
     if (o.fork) r = await fork(o.fork.from, o.fork.upTo);

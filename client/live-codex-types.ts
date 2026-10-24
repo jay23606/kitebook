@@ -17,10 +17,10 @@ export type SandboxPolicy = { type: "dangerFullAccess" } | { type: "readOnly"; n
   | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean; excludeTmpdirEnvVar: boolean; excludeSlashTmp: boolean };
 
 export type Thread = Open & { id: string; sessionId: string; forkedFromId: string | null; preview: string; name: string | null; cwd: string; createdAt: number; updatedAt: number; turns?: Turn[] };
-export type ThreadStartParams = { model?: string | null; cwd?: string | null; approvalPolicy?: AskForApproval | null; sandbox?: SandboxMode | null; serviceName?: string | null; ephemeral?: boolean | null; developerInstructions?: string | null };
-export type ThreadResumeParams = { threadId: string; model?: string | null; cwd?: string | null; approvalPolicy?: AskForApproval | null; sandbox?: SandboxMode | null; excludeTurns?: boolean };
+export type ThreadStartParams = { model?: string | null; cwd?: string | null; approvalPolicy?: AskForApproval | null; sandbox?: SandboxMode | null; config?: Record<string, unknown> | null; serviceName?: string | null; ephemeral?: boolean | null; developerInstructions?: string | null };
+export type ThreadResumeParams = { threadId: string; model?: string | null; cwd?: string | null; approvalPolicy?: AskForApproval | null; sandbox?: SandboxMode | null; config?: Record<string, unknown> | null; excludeTurns?: boolean };
 // fork copies stored history into a NEW thread; the source keeps its writer (owner sessions are never written to)
-export type ThreadForkParams = { threadId: string; lastTurnId?: string | null; model?: string | null; cwd?: string | null; approvalPolicy?: AskForApproval | null; sandbox?: SandboxMode | null; ephemeral?: boolean; excludeTurns?: boolean };
+export type ThreadForkParams = { threadId: string; lastTurnId?: string | null; model?: string | null; cwd?: string | null; approvalPolicy?: AskForApproval | null; sandbox?: SandboxMode | null; config?: Record<string, unknown> | null; ephemeral?: boolean; excludeTurns?: boolean };
 export type ThreadResponse = Open & { thread: Thread; model: string; cwd: string; sandbox: SandboxPolicy };
 export type ThreadListParams = { cursor?: string | null; limit?: number | null; sortKey?: "created_at" | "updated_at" | null; cwd?: string | string[] | null; archived?: boolean | null; searchTerm?: string | null };
 export type ThreadListResponse = { data: Thread[]; nextCursor: string | null };

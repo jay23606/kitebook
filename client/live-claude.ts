@@ -15,6 +15,7 @@
 //     ourselves (spawnClaudeCodeProcess) so the runner has its pid for the guard's kill switch and sees it die BETWEEN turns too; tag every
 //     user message with a uuid so a late result from an interrupted request can't end the next turn; withdraw queued steers
 //     (cancelAsyncMessage, when the SDK has it) before interrupting so a steer can't revive the stopped turn.
+import { READ_TOOLS, readTool, READ_ONLY_DENIAL } from "./execution-policy.ts";
 import { randomUUID } from "crypto";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
@@ -128,6 +129,7 @@ function session(m: any, x: { bin: string; sid: string; resume?: string; o: Live
       ...(priority ? { priority } : {}), ...(priority === "now" ? { origin: { kind: "human" } } : {}) }; };
   // canUseTool: Claude Code would prompt -> one Kitebook approval; idempotent per request id (reinitialize() re-sends pending asks)
   const canUseTool = (tool: string, input: any, opt: any) => {
+    if (x.o.readOnly) return Promise.resolve(readTool(tool) ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: READ_ONLY_DENIAL });
     // Claude's own clarifying question has no answer channel mid-turn here: Kitebook's is the needs_input marker (the task parks, the sender answers)
     if (tool === "AskUserQuestion") return Promise.resolve({ behavior: "deny", message: "Questions go through Kitebook: if you can't continue without an answer, end your turn with one line [relay-question: <your question>]. Otherwise make a sensible choice and say so." });
     const id = String(opt?.requestId ?? opt?.toolUseID ?? randomUUID()), have = asks.get(id); if (have) return have.p;
@@ -142,7 +144,10 @@ function session(m: any, x: { bin: string; sid: string; resume?: string; o: Live
     opt?.signal?.addEventListener?.("abort", () => fin({ behavior: "deny", message: "cancelled" }));
     asks.set(id, { ask, raw: input, done: fin, p }); emit({ approval: ask }); return p;
   };
-  const hooks = { PreToolUse: [{ hooks: [async (i: any) => { if (i?.hook_event_name === "PreToolUse") emit({ line: `→ ${i.tool_name} ${argsOf(i.tool_input)}` }); return {}; }] }] };
+  const hooks = { PreToolUse: [{ hooks: [async (i: any) => {
+    if (i?.hook_event_name === "PreToolUse") { emit({ line: `→ ${i.tool_name} ${argsOf(i.tool_input)}` });
+      if (x.o.readOnly && !readTool(String(i.tool_name))) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: READ_ONLY_DENIAL } }; }
+    return {}; }] }] };
   // our own spawn: its own process group (the runner's kill switch takes the tree), stderr kept for errors, and an exit between turns is seen
   const spawnClaudeCodeProcess = (o: any) => {
     const argv = x.o.wrap ? x.o.wrap([o.command, ...o.args]) : [o.command, ...o.args]; // quick asks: inside Kitebook's OS sandbox
@@ -153,7 +158,7 @@ function session(m: any, x: { bin: string; sid: string; resume?: string; o: Live
     return child; };
   const q = m.query({ prompt: inbox, options: {
     cwd: x.o.cwd, pathToClaudeCodeExecutable: x.bin, env: childEnv(x.o.env, x.keepKey), permissionMode: x.o.readOnly ? "plan" : "acceptEdits",
-    settingSources: ["user", "project", "local"], ...(x.o.writableRoots?.length ? { additionalDirectories: x.o.writableRoots } : {}), ...(x.o.model ? { model: x.o.model } : {}), ...(x.resume ? { resume: x.resume } : { sessionId: x.sid }),
+    settingSources: ["user", "project", "local"], ...(x.o.readOnly ? { tools: READ_TOOLS, strictMcpConfig: true, mcpServers: {} } : {}), ...(x.o.writableRoots?.length ? { additionalDirectories: x.o.writableRoots } : {}), ...(x.o.model ? { model: x.o.model } : {}), ...(x.resume ? { resume: x.resume } : { sessionId: x.sid }),
     canUseTool, hooks, spawnClaudeCodeProcess, stderr: (t: string) => { stderr = (stderr + t).slice(-2000); } } });
   // one reader for the whole task: messages go to the open turn; a result for one of ITS messages, with nothing queued behind it, ends it
   (async () => { try { for await (const msg of q) {

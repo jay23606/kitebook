@@ -40,7 +40,7 @@ Options:
       --json  Print events to stdout as JSONL
   -o, --output-last-message <FILE>  Specifies file where the last message from the agent should be written` },
   claude: { flags: { "-p": 0, "--print": 0, "--permission-mode": 1, "--output-format": 1, "--input-format": 1, "--verbose": 0, "-r": 1, "--resume": 1, "-c": 0, "--continue": 0, "--model": 1,
-      "--session-id": 1, "--tools": 1, "--disallowedTools": 1, "--allowedTools": 1, "--dangerously-skip-permissions": 0 },
+      "--session-id": 1, "--strict-mcp-config": 0, "--mcp-config": 1, "--tools": 1, "--disallowedTools": 1, "--allowedTools": 1, "--dangerously-skip-permissions": 0 },
     help: `Usage: claude [options] [command] [prompt]
   --allowedTools, --allowed-tools <tools...>  Comma or space-separated list of tool names to allow
   -c, --continue                        Continue the most recent conversation in the current directory
@@ -53,6 +53,8 @@ Options:
   -p, --print                           Print response and exit (useful for pipes)
   -r, --resume [value]                  Resume a conversation by session ID
   --session-id <uuid>                   Use a specific session ID for the conversation (must be a valid UUID)
+  --strict-mcp-config                  Only use MCP servers from --mcp-config
+  --mcp-config <configs...>            Load MCP servers from JSON files or strings
   --tools <tools...>                    Specify the list of available tools from the built-in set
   --verbose                             Override verbose mode setting from config` },
   gemini: { prompt: "--prompt", flags: { "-m": 1, "--model": 1, "-p": 1, "--prompt": 1, "-s": 0, "--sandbox": 0, "--approval-mode": 1, "-y": 0, "--yolo": 0, "-o": 1, "--output-format": 1,

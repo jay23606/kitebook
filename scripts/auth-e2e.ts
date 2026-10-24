@@ -176,6 +176,8 @@ const renew = async (c: any) => { const r: any = await (await token(asm, { grant
 Object.assign(cl, await renew(cl)); Object.assign(cl2, await renew(cl2)); ok((await v1(cl2.access_token, "whoami")).status === 200, "the second install's fresh token works before revoke_self");
 const self = await v1(cl.access_token, "revoke_self"); ok(self.body.ok && (await v1(cl2.access_token, "whoami")).status === 401, "an app ends its own access (revoke_self): every install's token stops", self.body);
 const cl3 = await connect("CIMD after revoke_self", cimdId, "http://127.0.0.1/callback", { choice: "folder", folder: "kb/claude-test" }, owner);
+if ((await v1(cl.access_token, "whoami")).status !== 401 || (await v1(cl2.access_token, "whoami")).status !== 401) die("reconnecting a revoked client resurrected an old access token");
+if ((await v1(cl3.access_token, "whoami")).status !== 200) die("the replacement connection must work");
 const rv = await go(asm.revocation_endpoint, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: cl3.refresh_token, token_type_hint: "refresh_token", client_id: cimdId }) });
 const rf3 = await token(asm, { grant_type: "refresh_token", refresh_token: cl3.refresh_token, client_id: cimdId, resource: BASE + "/mcp" }); ok(rv.status === 200 && rf3.status >= 400, "RFC 7009: the app revokes its refresh token; it no longer refreshes", [rv.status, rf3.status]);
 const forged = await mcpCall(pi3.access_token.slice(0, -6) + "AAAAAA", "tools/list"); ok(forged.status === 401, "a token with a broken signature: 401", forged.status);
