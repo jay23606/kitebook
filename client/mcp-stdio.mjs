@@ -45,7 +45,11 @@ rl.on("line", async line => {
   let msg; try { msg = JSON.parse(line); } catch { emit({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "invalid JSON" } }); return; }
   const id = msg?.id;
   const fail = (code, message) => { if (id !== undefined) emit({ jsonrpc: "2.0", id, error: { code, message } }); };
-  if (!msg || Array.isArray(msg) || typeof msg.method !== "string") { fail(-32600, "expected a JSON-RPC request"); return; }
+  const validId = typeof id === "string" || typeof id === "number" && Number.isFinite(id);
+  // Invalid envelopes aren't notifications: answer with null when there is no usable request id.
+  if (!msg || Array.isArray(msg) || msg.jsonrpc !== "2.0" || typeof msg.method !== "string" || id !== undefined && !validId) {
+    emit({ jsonrpc: "2.0", id: validId ? id : null, error: { code: -32600, message: "expected one JSON-RPC 2.0 request or notification" } }); return;
+  }
   if (active >= 16 || Buffer.byteLength(line) > 8 * 1024 * 1024) { fail(-32000, "kitebook bridge capacity exceeded; retry later"); return; }
   active++;
   try {
@@ -62,6 +66,7 @@ rl.on("line", async line => {
     if (update && r.result) { r.result._meta = { ...r.result._meta, "kitebook/mcpUpdate": update };
       if (Array.isArray(r.result.content)) r.result.content.push({ type: "text", text: update.next }); }
     emit(r);
-  } catch (e) { fail(/HTTP 401\b/.test(e.message) ? -32001 : -32000, /HTTP \d+$|exceeds bridge limit/.test(e.message) ? e.message : "kitebook request failed or timed out; check connectivity before retrying writes"); }
+  } catch (e) { const unauthorized = /HTTP 401\b/.test(e.message);
+    fail(unauthorized ? -32001 : -32000, unauthorized ? "kitebook HTTP 401: reconnect Kitebook or renew its token, then retry" : /HTTP \d+$|exceeds bridge limit/.test(e.message) ? e.message : "kitebook request failed or timed out; check connectivity before retrying writes"); }
   finally { active--; }
 });
