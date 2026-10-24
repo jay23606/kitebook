@@ -3185,13 +3185,14 @@ SGT=$(bun client/admin.ts peer sig runner 2>/dev/null); bun client/admin.ts gran
 # this section runs ~15 tasks back to back on one runner token; on a slow box its final reports crossed the 600/min default and a task
 # stayed "running" (the rate limit has its own test), so this one peer gets no limit here
 bun client/admin.ts ratelimit main 0 sig >/dev/null
-SGJ=$T/sgj; mkrepo $SGJ; mkdir -p $T/sgh; echo "CTXMARK-unsigned repo notes" > $SGJ/CONTEXT.md; git -C $SGJ add -A; git -C $SGJ -c user.name=t -c user.email=t@t commit -qm ctx
+SGNP=$((PORT + 59)); SGJ=$T/sgj; mkrepo $SGJ; mkdir -p $T/sgh; echo "CTXMARK-unsigned repo notes" > $SGJ/CONTEXT.md; git -C $SGJ add -A; git -C $SGJ -c user.name=t -c user.email=t@t commit -qm ctx
 cat > $T/sig.json <<SJ
-{"url":"$KITEBOOK_URL","token":"$SGT","space":"main","approve":"auto","access":"full","requireSignedAuto":true,"ntfy":{"topic":"sg","server":"http://127.0.0.1:$SP_NTFY"},
+{"url":"$KITEBOOK_URL","token":"$SGT","space":"main","approve":"auto","access":"full","requireSignedAuto":true,"ntfy":{"topic":"sg","server":"http://127.0.0.1:$SGNP"},
  "agents":{"ok":["sh","-c","echo ran >> ran.txt; echo ran"],"ok2":["sh","-c","echo reviewed >> ran.txt; echo reviewed"],"kbp":["sh","-c","printf '%s' \"\$1\" > $T/kbp.txt; echo ran","sh","{prompt}"]},"projects":{"sgj":{"path":"$SGJ","agent":"ok"}}}
 SJ
 HOME=$T/sgh bun client/runner.ts trust add $T/sig.json hark ed25519:bogus 2>&1 | grep -q "not an Ed25519" && HOME=$T/sgh bun client/runner.ts trust add $T/sig.json hark "$PUB" >/dev/null && jq -e --arg p "$PUB" '.trustedKeys.hark==[$p]' $T/sig.json >/dev/null && [ "$(fmode $T/sig.json)" = 600 ] || die "trust add"
-: > $T/ntfy-sig.jsonl; bun $T/ntfy.ts $T/ntfy-sig.jsonl > /dev/null 2>&1 & NP4=$!
+# A split run may leave the fleet phone alive; the signature fixture owns a separate port.
+: > $T/ntfy-sig.jsonl; SP_NTFY=$SGNP bun $T/ntfy.ts $T/ntfy-sig.jsonl > $T/ntfy-sig.log 2>&1 & NP4=$!
 KITEBOOK_TEST=1 HOME=$T/sgh bun client/runner.ts $T/sig.json > $T/sig.log 2>&1 & RSG=$!
 trap 'kill $SP ${RSG:-} ${NP4:-} 2>/dev/null; killmine node_modules/.bin/vite; killmine "workerd serve"' EXIT
 for i in $(seq 1 30); do h cat shared/runners/sig.json 2>/dev/null | jq -e '.signing' >/dev/null 2>&1 && break; sleep 0.5; done
