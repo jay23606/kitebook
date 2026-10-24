@@ -8,34 +8,12 @@ It has three parts: **personal assistants** (assistants for short) in the cloud 
 
 <sub>\* Dots: untested / unverified. Any other MCP client can connect the same way.</sub>
 
-```mermaid
-flowchart LR
-  subgraph Cloud["Cloud (not trusted with your machine)"]
-    A["Assistants<br/>Grok bot · Hark · Muse · Dots*"]
-  end
-  subgraph Srv["Kitebook server (yours)<br/>workerd on your Mac, Docker, or a Cloudflare Worker"]
-    F["Personal KB: shared memory,<br/>files, per-agent summaries"]
-    T[Tasks and results]
-    P[Approvals and app permissions]
-    E[Events]
-  end
-  subgraph Mac["Your computer (trusted)"]
-    R[Runner]
-    K[("Device keys<br/>Keychain / Secure Enclave")]
-    W["Git worktrees"]
-    G["Coding agents<br/>Pi · Codex · Claude Code · Gemini · opencode …"]
-    Y(["You: dialog, phone,<br/>browser or kitebook approve"])
-  end
-  A <-- "MCP / HTTPS: read and write memory,<br/>send tasks (OAuth or app key)" --> Srv
-  R -- "outbound WebSocket + HTTPS<br/>device-signed" --> Srv
-  Y -. "approves one exact task" .-> R
-  K --- R
-  R --> W --> G
-  G -- "branch · diff · tests · summary · learnings" --> R
-  R -- "result + summary into the KB" --> Srv
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/architecture-dark.svg">
+  <img alt="Daily assistants and coding agents share Kitebook’s durable knowledge and files over MCP. Optional coding tasks pass through a local runner and owner permissions." src="images/architecture.svg" width="1120">
+</picture>
 
-The dashed line is the only gate that lets code run: you approving one task, on a device you own.
+Solid arrows carry shared workspace reads and writes. Dashed arrows show the optional coding path: the runner checks your exact approval or a saved signed permission before running work. Native sessions are shared only with explicit session consent.
 
 ## Components
 | Part | Where it runs | What it does |

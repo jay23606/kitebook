@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
+<title id="title">Kitebook: shared knowledge across daily assistants and coding agents</title>
+<desc id="desc">Cloud assistants and local coding agents read and write the same durable versioned workspace over HTTPS and MCP. Published files, knowledge and synchronization checkpoints survive client sandbox resets. An optional task path goes through the local runner, which verifies an exact approval or saved signed permission before a coding agent executes in a worktree. The runner connects outbound. Native sessions and credentials remain on the computer unless their context is explicitly shared.</desc>
+<defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto-start-reverse"><path d="M0 0 7 3.5 0 7" fill="#829ab0"/></marker></defs>
+<rect width="1120" height="760" rx="24" fill="#101923"/>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif" fill="#eef4fa">
+<text x="28" y="48" font-size="30" font-weight="650" fill="#eef4fa">Shared knowledge. Every agent.</text>
+<text x="28" y="80" font-size="20" font-weight="400" fill="#b4c3d2">One durable workspace; coding work when you need it.</text>
+<rect x="28" y="130" width="216" height="386" rx="20" fill="#162330" stroke="#415468" stroke-dasharray="5 5"/>
+<g transform="translate(48 152)" fill="none" stroke="#64d3cb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<path d="M10 31h26a9 9 0 0 0 1-18 13 13 0 0 0-25-2 10 10 0 0 0-2 20Z"/>
+</g>
+<text x="48" y="225" font-size="23" font-weight="650" fill="#eef4fa">Daily assistants</text>
+<text x="48" y="263" font-size="20" font-weight="400" fill="#eef4fa">Hark · Muse</text>
+<text x="48" y="293" font-size="20" font-weight="400" fill="#eef4fa">Other MCP clients</text>
+<path d="M48 321H224" fill="none" stroke="#415468" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="48" y="358" font-size="20" font-weight="600" fill="#eef4fa">Sandboxes reset.</text>
+<text x="48" y="391" font-size="19" font-weight="400" fill="#b4c3d2">Published work</text>
+<text x="48" y="419" font-size="19" font-weight="400" fill="#b4c3d2">stays in Kitebook.</text>
+<text x="48" y="477" font-size="18" font-weight="400" fill="#b4c3d2">Scoped app tokens</text>
+<rect x="352" y="104" width="416" height="506" rx="24" fill="#203f46" stroke="#64d3cb"/>
+<g transform="translate(376 128)" fill="none" stroke="#64d3cb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<ellipse cx="22" cy="9" rx="18" ry="7"/><path d="M4 9v25c0 9 36 9 36 0V9M4 21c0 9 36 9 36 0"/>
+</g>
+<text x="432" y="158" font-size="29" font-weight="700" fill="#eef4fa">Kitebook</text>
+<text x="376" y="201" font-size="23" font-weight="600" fill="#eef4fa">Your realtime workspace</text>
+<rect x="376" y="226" width="368" height="268" rx="14" fill="#1d2d3c" stroke="#415468"/>
+<g transform="translate(392 246)" fill="none" stroke="#64d3cb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<path d="M8 3h21l9 9v28H8ZM29 3v10h9M15 21h15M15 28h15M15 35h9"/>
+</g>
+<text x="449" y="264" font-size="21" font-weight="600" fill="#eef4fa">Shared knowledge</text>
+<text x="449" y="293" font-size="17" font-weight="400" fill="#b4c3d2">Notes, context and learnings</text>
+<g transform="translate(392 327)" fill="none" stroke="#64d3cb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<path d="M3 12h15l5 6h19v22H3ZM8 6h26v12"/>
+</g>
+<text x="449" y="345" font-size="21" font-weight="600" fill="#eef4fa">Versioned files</text>
+<text x="449" y="374" font-size="17" font-weight="400" fill="#b4c3d2">Datasets, handoffs and history</text>
+<g transform="translate(392 408)" fill="none" stroke="#64d3cb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<path d="M6 18a17 17 0 0 1 29-9l5 5M40 4v10H30M38 27A17 17 0 0 1 9 36l-5-5M4 41V31h10"/>
+</g>
+<text x="449" y="426" font-size="21" font-weight="600" fill="#eef4fa">Durable sync journal</text>
+<text x="449" y="455" font-size="17" font-weight="400" fill="#b4c3d2">Snapshot → changes → ack</text>
+<text x="376" y="538" font-size="21" font-weight="650" fill="#eef4fa">Optional coding work</text>
+<text x="376" y="572" font-size="20" font-weight="400" fill="#b4c3d2">Tasks, approvals and results</text>
+<rect x="876" y="130" width="216" height="542" rx="20" fill="#162330" stroke="#415468" stroke-dasharray="5 5"/>
+<g transform="translate(896 152)" fill="none" stroke="#9dbaff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<rect x="2" y="3" width="40" height="28" rx="4"/><path d="M15 39h14M22 31v8m-8-27-5 5 5 5m16-10 5 5-5 5"/>
+</g>
+<text x="896" y="225" font-size="23" font-weight="650" fill="#eef4fa">Your computer</text>
+<text x="896" y="263" font-size="21" font-weight="600" fill="#eef4fa">Coding agents</text>
+<text x="896" y="297" font-size="20" font-weight="400" fill="#eef4fa">Pi · Codex</text>
+<text x="896" y="327" font-size="20" font-weight="400" fill="#eef4fa">Claude Code · …</text>
+<path d="M896 350H1072" fill="none" stroke="#415468" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="896" y="384" font-size="20" font-weight="600" fill="#eef4fa">Local by default</text>
+<text x="896" y="417" font-size="18" font-weight="400" fill="#b4c3d2">Repos, logins and</text>
+<text x="896" y="444" font-size="18" font-weight="400" fill="#b4c3d2">native sessions</text>
+<rect x="896" y="536" width="176" height="104" rx="14" fill="#1d2d3c" stroke="#415468"/>
+<g transform="translate(908 552)" fill="none" stroke="#9dbaff" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+<path d="m8 10 11 11L8 32m16 0h15"/>
+</g>
+<text x="961" y="579" font-size="22" font-weight="650" fill="#eef4fa">Runner</text>
+<text x="912" y="615" font-size="17" font-weight="400" fill="#b4c3d2">Project worktrees</text>
+<path d="M254 285H342" fill="none" stroke="#829ab0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<text x="298" y="265" font-size="18" font-weight="400" text-anchor="middle" fill="#b4c3d2">MCP</text>
+<text x="298" y="319" font-size="17" font-weight="400" text-anchor="middle" fill="#b4c3d2">HTTPS</text>
+<path d="M778 285H866" fill="none" stroke="#829ab0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
+<text x="822" y="265" font-size="18" font-weight="400" text-anchor="middle" fill="#b4c3d2">MCP</text>
+<text x="822" y="319" font-size="17" font-weight="400" text-anchor="middle" fill="#b4c3d2">HTTPS</text>
+<path d="M886 580H778" fill="none" stroke="#829ab0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="822" y="555" font-size="16" font-weight="400" text-anchor="middle" fill="#b4c3d2">Outbound</text>
+<path d="M984 525V466" fill="none" stroke="#829ab0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<rect x="352" y="634" width="416" height="66" rx="14" fill="#162330" stroke="#415468"/>
+<text x="372" y="661" font-size="20" font-weight="600" fill="#eef4fa">You decide what may run</text>
+<text x="372" y="685" font-size="17" font-weight="400" fill="#b4c3d2">Exact approval or saved signed permission</text>
+<path d="M778 666H840Q852 666 852 654V624Q852 614 866 614H886" fill="none" stroke="#829ab0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 6" marker-end="url(#arrow)"/>
+<text x="28" y="731" font-size="19" font-weight="400" fill="#b4c3d2">Host it on your Mac, a Docker host, or Cloudflare Workers + Durable Objects.</text>
+</g></svg>
