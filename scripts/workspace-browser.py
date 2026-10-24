@@ -60,6 +60,10 @@ with sync_playwright() as pw:
     page.on('dialog', lambda d: d.accept()); page.reload(); page.locator('.memory-item').filter(has_text='Workspace browser trial').click(); page.locator('#memory-detail').get_by_role('button',name='Edit note',exact=True).click(); page.locator('#memory-edit-text').wait_for()
     check(page.locator('#memory-edit-text').input_value() == 'Correction from another agent.', 'correction is the current retrieval result')
     page.locator('#memory-detail').get_by_role('button',name='Cancel',exact=True).click()
+    current = api('entry', {'id':note['id']}).json()['result']
+    check(api('save', {'id':note['id'],'if_match':current['sha'],'title':note['title'],'kind':'fact','text':'A new published version in the reading pane.'}, nonce()).json().get('ok'), 'publish a reader update')
+    page.locator('#memory-refresh').click(); page.wait_for_function("() => document.querySelector('.document-body').textContent.includes('new published version')")
+    check('new published version' in page.locator('.document-body').inner_text(), 'selected reader updates without reopening the note')
     page.locator('.document-source > summary').click(); page.wait_for_selector('.version-history li')
     check(page.locator('.version-history li').count() >= 2, 'version history loads')
     page.evaluate("() => {document.activeElement.blur();scrollTo(0,0)}")
