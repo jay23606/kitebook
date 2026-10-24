@@ -2946,8 +2946,8 @@ sed 's#from *"cloudflare:workers"#from "data:text/javascript,export class Durabl
 # additions, ~8 KB gzip of runner text) put dev + phone-approve at 933.2 gzip, 3236 raw
 # 938 since hosted-prep (2026-10-23): the account model groundwork (src/account-store.ts users + audit + usage counters, src/identity.ts,
 # client/account.ts) puts dev + it at 935.5 gzip, 3243 raw (raw budget unchanged)
-# 960 / raw 3300: model discovery adapter served to runners + session metadata, MCP revisions and cost guards (+~7 KB gzip).
-BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 960) && echo "$BS" | jq -e '.raw_kb < 3300' >/dev/null \
+# Durable workspace: recovery client served to agents, signed cursors and shared knowledge/file browser (3320.8 KB raw / 961.6 KB gzip, including the glass UI and loading states).
+BS=$(bun scripts/bundle-size.ts $BJ --json --top 3 --max-gzip-kb 965) && echo "$BS" | jq -e '.raw_kb < 3330' >/dev/null \
   && [ "$(bun -e "await import('$T/bundle-eval.mjs'); console.log(typeof Reflect.getMetadata)")" = undefined ] \
   && grep -q 'from *"cloudflare:workers"' $BJ && [ -z "$(ls .cloudflare/output/v0/workers/default/bundle/*.js | grep -v '/index.js$')" ] \
   && pass "worker bundle: one minified file, $(echo "$BS" | jq -r .gzip_kb) KB gzip (budget 960; includes model/session discovery and MCP revisions), Better Auth loaded on first sign-in" || { echo "$BS"; die "bundle size"; }
