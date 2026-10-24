@@ -179,14 +179,17 @@ if (argv[0] === "mcp") { const log = LOGF; if (log) appendFileSync(log, JSON.str
 // a run: check every flag against this CLI's own list, like the real one would
 let a = argv; if (S.sub) { if (a[0] !== S.sub) { console.error(`error: unknown command ${a[0] ?? ""}`); process.exit(2); } a = a.slice(1); }
 const got: Record<string, string | true> = {}, pos: string[] = [];
+let endOfFlags = false;
 for (let i = 0; i < a.length; i++) { const x = a[i];
-  if (x.startsWith("-") && x.length > 1) { const [k, v] = x.includes("=") ? [x.slice(0, x.indexOf("=")), x.slice(x.indexOf("=") + 1)] : [x, null];
+  if (x === "--") { endOfFlags = true; continue; }
+  if (!endOfFlags && x.startsWith("-") && x.length > 1) { const [k, v] = x.includes("=") ? [x.slice(0, x.indexOf("=")), x.slice(x.indexOf("=") + 1)] : [x, null];
     if (!(k in S.flags)) { console.error(`error: unknown option '${k}'`); process.exit(2); }
     if (S.flags[k]) { const val = v ?? a[++i]; if (val == null) { console.error(`error: option '${k}' needs a value`); process.exit(2); } got[k] = got[k] && k === "--deny-tool" ? `${got[k]},${val}` : val; } else got[k] = true; }
   else pos.push(x); }
 let codexResume: string | undefined; if (bin === "codex" && pos[0] === "resume") { codexResume = pos[1]; pos.splice(0, 2); }
 if (bin === "claude" && got["--output-format"] === "stream-json" && !got["--verbose"]) { console.error("Error: When using --print, --output-format=stream-json requires --verbose"); process.exit(1); }
 const prompt = String((S.prompt ? got[S.prompt] ?? got[S.prompt === "-p" ? "--single" : "-p"] : null) ?? pos.join(" "));
+if (prompt.startsWith("-") && !S.prompt) writeFileSync("positional-prompt.txt", pos.join(" "));
 // sessions Kitebook names: --session-id creates (Grok Build refuses an existing one), --resume needs one (Copilot's --session-id does either)
 const SD = join(process.env.HOME || "/tmp", ".fake-sessions"), sess = (id: string) => join(SD, `${bin}-${id}`); let named: string | undefined, existed = false;
 if ((bin === "copilot" || bin === "grok") && (got["--session-id"] || (bin === "grok" && got["-s"]))) { named = String(got["--session-id"] ?? got["-s"]); existed = existsSync(sess(named));
@@ -207,6 +210,7 @@ if (prompt.includes("READ-ONLY")) { // a quick ask
 } else if (prompt.includes("FAKE-ASK") && !prompt.includes("Answer from") && !prompt.includes("Earlier rounds:")) text = `looking around\n[relay-question: Which name should the file get? Reply name=<x>]`;
 else if (prompt.includes("Answer from") || prompt.includes("Earlier rounds:")) { const name = (prompt.match(/name=(\w+)/) ?? [])[1] ?? "none";
   writeFileSync("resumed.txt", `name=${name} resumed=${resumeId ?? (cont ? "continue" : "no")} original_prompt_again=${prompt.includes("FAKE-ASK") ? "yes" : "no"}\n`); text = `named it ${name}`; }
+else if (prompt.startsWith("-")) { writeFileSync("received-prompt.txt", prompt); text = `received prompt: ${prompt}`; }
 else { writeFileSync(`${bin}.txt`, `made by ${bin}\n`); text = `Wrote ${bin}.txt\nall done by ${bin}`; }
 if (!events) { say(text); process.exit(0); }
 if (bin === "codex") { say({ type: "thread.started", thread_id: sid }); say({ type: "turn.started" });

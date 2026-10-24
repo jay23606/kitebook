@@ -20,7 +20,7 @@ import * as PL from "./platform.ts";
 
 export type Ev = { line?: string; text?: string; delta?: string; sid?: string; err?: string };
 export type Adapter = {
-  label: string; bin: string; helpArgv?: string[];      // helpArgv: where the run flags are listed (opencode: `opencode run --help`, codex: `codex exec --help`)
+  label: string; bin: string; helpArgv?: string[]; endOfFlags?: boolean; // helpArgv: where the run flags are listed (opencode: `opencode run --help`, codex: `codex exec --help`)
   task: string[]; promptFlag?: string; need: string[]; opt?: string[][]; modelFlag: string;
   events?: { flags: string[]; parse: (e: any) => Ev }; eventsWhen?: RegExp; first?: string[]; resume?: string[]; askBase?: string[];
   ask?: { flags: string[]; need: string[]; opt?: string[][] }; install: string;
@@ -68,7 +68,7 @@ export const ADAPTERS: Record<string, Adapter> = {
       return {}; } },
     resume: ["--resume", "{sid}"], ask: { flags: ["--approval-mode", "plan"], need: ["plan"] }, install: "npm i -g @google/gemini-cli" },
   // https://cursor.com/docs/cli/reference/parameters.md + output-format.md. Never fall back to a bare `agent` binary: Grok installs one too.
-  cursor: { label: "Cursor", bin: "cursor-agent", task: ["--print", "--force"], need: ["--print", "--force"], opt: [["--trust"]], modelFlag: "--model",
+  cursor: { label: "Cursor", bin: "cursor-agent", endOfFlags: true, task: ["--print", "--force"], need: ["--print", "--force"], opt: [["--trust"]], modelFlag: "--model",
     events: { flags: ["--output-format", "stream-json"], parse: e => {
       if (e.type === "system" && e.subtype === "init") return { sid: e.session_id };
       if (e.type === "assistant") return { text: txt(e.message?.content), sid: e.session_id };
@@ -87,7 +87,7 @@ export const ADAPTERS: Record<string, Adapter> = {
     ask: { flags: ["--allow-all-tools", "--deny-tool", "write", "--deny-tool", "shell", "--deny-tool", "url", "--deny-tool", "memory"], need: ["--deny-tool", "--allow-all-tools"], opt: [["--disable-builtin-mcps"]] },
     install: "npm i -g @github/copilot" },
   // https://opencode.ai/docs/cli/ (run: --format json events carry sessionID; --session continues it)
-  opencode: { label: "opencode", bin: "opencode", helpArgv: ["opencode", "run", "--help"], task: ["run"], need: ["--model"], modelFlag: "--model",
+  opencode: { label: "opencode", bin: "opencode", helpArgv: ["opencode", "run", "--help"], endOfFlags: true, task: ["run"], need: ["--model"], modelFlag: "--model",
     events: { flags: ["--format", "json"], parse: e => {
       const sid = e.sessionID;
       if (e.type === "text") return { text: String(e.part?.text ?? ""), sid };
@@ -124,12 +124,12 @@ export function build(name: string, help: string | null): Built {
   // "--output-format" and its "stream-json" value both listed; a CLI that always prints JSON (no flag) only when its --help says which CLI it is
   const evOn = !!a.events && (a.events.flags.length ? a.events.flags.every(has) : !!help && !!a.eventsWhen?.test(help)), ev = evOn ? a.events!.flags : [];
   const pre = [a.bin, ...a.task, ...opt, ...ev, a.modelFlag, "{model}", "{resume}"];
-  const argv = [...pre, ...(a.promptFlag ? [a.promptFlag] : []), "{prompt}"];
+  const argv = [...pre, ...(a.promptFlag ? [a.promptFlag] : []), ...(a.endOfFlags ? ["--"] : []), "{prompt}"];
   const first = a.first && has(a.first[0]) ? a.first : null;
   // a {tasksid} resume continues the session `first` named, so it needs both flags; a {sid} resume needs the event stream that carries the id
   const resume = !a.resume || !has(a.resume[0]) ? null : a.resume.some(x => x.includes("{tasksid}")) ? (first ? a.resume : null) : a.resume.some(x => x.includes("{sid}")) && !evOn ? null : a.resume;
   const ro = !!a.ask && a.ask.need.every(has), askOpt = ro ? (a.ask!.opt ?? []).filter(o => has(o[0])).flat() : [];
-  const ask = [a.bin, ...(a.askBase ?? []), ...opt.filter(f => f !== "--always-approve"), ...(ro ? [...a.ask!.flags, ...askOpt] : []), a.modelFlag, "{model}", ...(a.promptFlag ? [a.promptFlag] : []), "{prompt}"];
+  const ask = [a.bin, ...(a.askBase ?? []), ...opt.filter(f => f !== "--always-approve"), ...(ro ? [...a.ask!.flags, ...askOpt] : []), a.modelFlag, "{model}", ...(a.promptFlag ? [a.promptFlag] : []), ...(a.endOfFlags ? ["--"] : []), "{prompt}"];
   return { argv, json: evOn, events: evOn ? name : null, first, resume, ask, askReadOnly: ro, askEvents: evOn && !ev.length ? name : null,
     issue: missing.length ? `${a.label} on this computer doesn't list ${missing.join(", ")} in \`${(a.helpArgv ?? [a.bin, "--help"]).join(" ")}\`, so Kitebook can't run it headless; update it (${a.install})` : null, missing };
 }

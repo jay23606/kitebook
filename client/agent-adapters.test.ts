@@ -29,7 +29,7 @@ const flagsOf = (argv: string[]) => argv.filter(x => /^-/.test(x));
 test("every adapter is found and needs nothing its --help doesn't list", () => {
   expect(Object.keys(HELP).sort()).toEqual(Object.keys(ADAPTERS).sort());
   for (const n of Object.keys(ADAPTERS)) { const b = build(n, HELP[n]); expect(b.issue).toBeNull();
-    for (const f of [...flagsOf(b.argv), ...flagsOf(b.ask ?? []), ...flagsOf(b.first ?? []), ...flagsOf(b.resume ?? [])]) expect(listed(HELP[n], f)).toBe(true); }
+    for (const f of [...flagsOf(b.argv), ...flagsOf(b.ask ?? []), ...flagsOf(b.first ?? []), ...flagsOf(b.resume ?? [])].filter(f => f !== "--")) expect(listed(HELP[n], f)).toBe(true); }
 });
 test("task argv runs headless in the fake CLI (with and without a model), writes in the worktree, streams events where listed", () => {
   for (const n of Object.keys(ADAPTERS)) { const b = build(n, HELP[n]);
@@ -41,6 +41,16 @@ test("task argv runs headless in the fake CLI (with and without a model), writes
   expect(build("gemini", HELP.gemini).events).toBe("gemini"); expect(build("cursor", HELP.cursor).events).toBe("cursor"); expect(build("opencode", HELP.opencode).events).toBe("opencode");
   expect(build("codex", HELP.codex).events).toBe("codex"); expect(build("claude", HELP.claude).events).toBe("claude");
   expect(build("copilot", HELP.copilot).events).toBeNull(); expect(build("grok", HELP.grok).events).toBeNull();
+});
+test("opencode and Cursor pass dash-leading prompts after --", () => {
+  for (const n of ["opencode", "cursor"]) {
+    const b = build(n, HELP[n]), prompt = "-start with a dash";
+    expect(b.argv.slice(-2)).toEqual(["--", "{prompt}"]);
+    const r = run(NEW, b.argv, "m1", prompt);
+    expect(r.code).toBe(0);
+    expect(readFileSync(join(r.wt, "positional-prompt.txt"), "utf8")).toBe(prompt);
+    expect(readFileSync(join(r.wt, "received-prompt.txt"), "utf8")).toBe(prompt);
+  }
 });
 test("Codex: exec --sandbox workspace-write (never the removed --full-auto, which codex 0.163 refuses with exit 2)", () => {
   const b = build("codex", HELP.codex); expect(b.argv.slice(0, 4)).toEqual(["codex", "exec", "--sandbox", "workspace-write"]); expect(b.argv).not.toContain("--full-auto");
