@@ -1005,8 +1005,8 @@ pk "default" --project pa; [ "$RES" = '["par",null,"default"]' ] && h task_get $
 # --- task spec v2: structured spec, refusals with reasons, enforcement after the run, plan -> task_promote, describe ---
 h describe | jq -e '(.runners[]|select(.name=="fleet")|.online and .spec.version==2 and (.projects.ps.verify|index("test -f spec_ok.txt")) and (.agents|index("sp")) and .max_parallel==3 and has("hours")) and .task_spec.version==2 and (.task_spec.modes==["plan","execute"]) and (.peers|map(.name)|index("hark"))' >/dev/null && pass "describe: capability manifest (runners: online, agents, projects + verify cmds, spec support; task spec schema)" || { h describe; die "describe"; }
 # frictions: which code runs where, for signed-in callers only: describe.server (baked in at build) and each runner's build; /health unchanged
-HC=$(git rev-parse HEAD); h describe | jq -e --arg c "$HC" '(.server|.commit==$c and (.version|test("^(main|dev|local)-[0-9.]+-[0-9a-f]{7}$|^v[0-9]")) and (.channel|test("^(main|dev|local)$")) and (.built_at|length>0))
-  and (.runners[]|select(.name=="fleet")|.build|.commit==$c and .channel==(.version|split("-")[0]) and (.branch|length>0))' >/dev/null && [ "$(curl -s $KITEBOOK_URL/health)" = '{"ok":true}' ] \
+HC=$(git rev-parse HEAD); h describe | jq -e --arg c "$HC" '.server.channel as $channel | (.server|.commit==$c and (.version|test("^(main|dev|local)-[0-9.]+-[0-9a-f]{7}$|^v[0-9]")) and (.channel|test("^(main|dev|local)$")) and (.built_at|length>0))
+  and (.runners[]|select(.name=="fleet")|.build|.commit==$c and .channel==$channel and (.version|test("^(main|dev|local)-[0-9.]+-[0-9a-f]{7}$|^v[0-9]")) and (.branch|length>0))' >/dev/null && [ "$(curl -s $KITEBOOK_URL/health)" = '{"ok":true}' ] \
   && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $KITEBOOK_URL/v1/describe -d '{"space":"main"}')" = 401 ] \
  || { h describe | jq '{server, b: [.runners[]|{name, build}]}'; curl -s $KITEBOOK_URL/health; die "describe builds"; }
 curl -s -H "authorization: Bearer $HARK" "$KITEBOOK_URL/v1/describe?space=main" | jq -e '.ok' >/dev/null || die "describe GET"
