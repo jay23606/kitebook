@@ -5,7 +5,8 @@
 The first public release of Kitebook (it had an earlier name during private development). It works end to end for the maintainer every day, but it is early: expect bugs, rough edges and breaking changes before 0.1.
 
 ### What's in it
-- An MCP server any assistant can connect to by URL (Claude.ai, ChatGPT, Hark, Muse, any MCP client), with OAuth and per-app permissions.
+- A personal knowledge base every agent reads and writes, with a summary of what each task did and what agents learned.
+- An MCP server your personal assistants (Grok bot, Hark, Muse; Dots unverified) connect to by URL, with OAuth and per-app permissions. Any other MCP client can connect too.
 - Tasks that run on your own computer after you approve them, in a git worktree, and come back as a branch, diff and test results.
 - Coding agents: Pi, Codex, Claude Code (most tested); Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI (less tested).
 - Approvals on a Mac dialog, phone, browser or `kitebook approve`; signed tasks for pre-approved apps.
