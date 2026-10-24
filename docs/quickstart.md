@@ -64,3 +64,9 @@ Open `/start` later, from your phone too. **Home** shows only what you can act o
 **Settings** is one short list: Address (Copy), Connected apps, Run tasks without asking, Install updates without asking, Signed-in devices; everything else (connection and lockdown, instructions for your assistants, approvals, passkeys and trusted browsers, updates, releases, recovery, Experimental) is under **More**. `/settings#<section>` (for example `#apps` or `#approvals`) opens the part it's in.
 
 An agent given only the server's URL can onboard itself: `/` and `/llms.txt` name `/start`, `/mcp` + its OAuth metadata, `/openapi.json` and `/install.sh`.
+
+## Your workspace
+
+The desktop workspace uses the full window: tasks that need your attention, work in progress and recent results are grouped separately, with connected apps and computers alongside them. Use the sidebar to open connections, instructions, approvals, devices and updates directly. On a phone, navigation becomes a horizontal list and the panels stack.
+
+Use **Connection options** below the task list to add an assistant. Open **Apps & agents** to manage existing connections. Settings sections open by click or keyboard; moving the pointer over them does not change the page.
