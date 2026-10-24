@@ -12,7 +12,7 @@
 // (relay-policy:v1, relay-owner-cmd:v1, relay-dispatch:v1, ...), the relay-<acct> session cookie, the relay-cli OAuth client, the
 // relay_update tool, agent markers ([relay-question: ...], .relay-learnings.md), Durable Object keys, and the GitHub repo (now um1b/kitebook, formerly um1b/relay).
 export const CLI = "kitebook", LEGACY_CLI = "relay", NAME = "Kitebook";
-export const TAGLINE = "A shared knowledge base for your AI assistants and coding agents. Hand off tasks from any assistant to the agents on your own machine and get back a branch, diff and tests.";
+export const TAGLINE = "A shared knowledge base for your AI assistants and coding agents. Share versioned files, data and handoffs across sandbox restarts, and delegate coding work to your own machine.";
 export const LABEL = { server: "dev.kitebook.server", runner: "dev.kitebook.runner", tunnel: "dev.kitebook.tunnel", ngrok: "dev.kitebook.ngrok" } as const;
 export const LEGACY_LABEL = { server: "dev.relay.server", runner: "dev.relay.runner", tunnel: "dev.relay.tunnel", ngrok: "dev.relay.ngrok" } as const;
 export const UNIT = { server: "kitebook-server", runner: "kitebook-runner", tunnel: "kitebook-tunnel" } as const;
@@ -30,6 +30,9 @@ aliasEnv();
 
 export const HELP = `${CLI}: Kitebook on this Mac
 
+  ${CLI} workspace pull <dir> [--path shared/project]    recover shared files in a fresh sandbox
+  ${CLI} workspace publish <dir> --goal text --next text    publish changes and a handoff
+  ${CLI} workspace status <dir>    show local changes and pending publication
   ${CLI} status                 is everything up? server, runner, public access, version
   ${CLI} open                   open Kitebook in your browser, signed in   (${CLI} settings: straight to Settings)
   ${CLI} update                 update now (it also updates by itself, and Settings -> Updates has Update now)   (${CLI} pin <version|->: approve one exact version for the next update)

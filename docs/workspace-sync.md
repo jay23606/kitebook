@@ -55,7 +55,7 @@ bun client/admin.ts space restored
 bun client/admin.ts import restored workspace-backup.json
 ```
 
-Protect backups as private workspace data. Import rebuilds derived KB indexes, rotates the synchronization epoch and clears replica acknowledgements. Membership follows the destination's grants. In-flight tasks arrive failed because their old runner cannot continue them there. The portable dump is a migration/backup of workspace data, not a complete server identity/credential backup. An operator restoring raw database files must rotate/reset old client checkpoints or rebootstrap clients; a raw rollback outside the import API is not automatically detectable. Version history on the same disk is not an independent backup.
+Protect backups as private workspace data. Portable exports are subject to the existing HTTP/Durable Object message-size limits; for large workspaces, use a coordinated deployment-level backup of the database and external blob backend and test restoring both. Import rebuilds derived KB indexes, rotates the synchronization epoch and clears replica acknowledgements. Membership follows the destination's grants. In-flight tasks arrive failed because their old runner cannot continue them there. The portable dump is a migration/backup of workspace data, not a complete server identity/credential backup. An operator restoring raw database files must rotate/reset old client checkpoints or rebootstrap clients; a raw rollback outside the import API is not automatically detectable. Version history on the same disk is not an independent backup.
 
 ## Verification
 

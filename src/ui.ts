@@ -49,7 +49,7 @@ const all=()=>document.querySelectorAll("details.fold").forEach(wire);all();new 
 
 // The signed-in workspace uses the whole window; approval and sign-in pages keep their focused reading layout.
 export const WORKSPACE_CSS = `
-body.workspace{--danger:#b42318;--onacc:#fff;--bg:#f1f4f7;--card:#fff;--soft:#eaf0f1;--fg:#203237;--mut:#63777e;--line:#dce5e8;--acc:#147e72;--acc2:#0c665d;--link:#14766b;--focus:#147e72;--field:#899ca2;font-size:15px;max-width:none;margin:0;padding:0;background:var(--bg)}
+body.workspace{--danger:#b42318;--onacc:#fff;--bg:#f1f4f7;--card:#fff;--soft:#eaf0f1;--fg:#203237;--mut:#5b7077;--line:#dce5e8;--acc:#147e72;--acc2:#0c665d;--link:#14766b;--focus:#147e72;--field:#899ca2;font-size:15px;max-width:none;margin:0;padding:0;background:var(--bg)}
 .workspace-shell{display:grid;grid-template-columns:224px minmax(0,1fr);min-height:100dvh}
 .workspace-rail{position:sticky;top:0;height:100dvh;display:flex;flex-direction:column;padding:30px 16px 20px;background:var(--card);border-right:1px solid var(--line);gap:28px}
 .workspace-brand{display:flex;align-items:center;gap:10px;padding:0 12px;color:var(--fg);text-decoration:none;font-size:22px;font-weight:700;letter-spacing:-.7px}.workspace-brand svg{width:30px;height:34px;color:var(--acc);flex:none}
