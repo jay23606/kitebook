@@ -1,5 +1,8 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Before opening a pull request
+    url: https://github.com/um1b/kitebook/blob/main/CONTRIBUTING.md
+    about: Discuss scope and get maintainer agreement before implementation. Backlog issues are not a call for PRs.
   - name: Security vulnerability
     url: https://github.com/um1b/kitebook/security/advisories/new
     about: Report privately, please. See SECURITY.md.

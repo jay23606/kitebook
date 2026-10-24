@@ -2,6 +2,9 @@ name: Feature request
 description: An idea or a missing piece
 labels: [enhancement]
 body:
+  - type: markdown
+    attributes:
+      value: "This issue starts a discussion, not an approved implementation. Check existing issues and PRs, and wait for maintainer agreement before starting work or opening a PR."
   - type: textarea
     id: problem
     attributes: { label: The problem, description: "What are you trying to do, and what gets in the way today?" }
@@ -17,4 +20,4 @@ body:
     id: help
     attributes:
       label: Contributing
-      options: [{ label: "I'd like to build this myself" }]
+      options: [{ label: "I'd like to discuss implementing this after maintainer agreement" }]

@@ -102,7 +102,7 @@ Any other MCP client can connect too, with `https://<your-kitebook>/mcp`.
 |---|---|
 | Pi, Codex, Claude Code | Used daily by the maintainer |
 | Gemini CLI, Cursor, GitHub Copilot CLI, opencode, Grok CLI | Supported, less tested |
-| Aider, Cline, others | Not yet: [good first issues](https://github.com/um1b/kitebook/issues?q=is%3Aissue+label%3A%22good+first+issue%22) |
+| Aider, Cline, others | Not supported yet; tracked in the maintainer backlog |
 
 Runs on macOS (main target), Linux and Windows 10/11. Per OS: [docs/setup.md](docs/setup.md#linux-and-windows).
 
@@ -132,7 +132,9 @@ npm run test:fast      # unit tests + core end-to-end checks, about 2 min
 Code map and conventions: [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests target `dev`.
 
 ## Contributing
-New agent adapters, Linux and Windows testing, and docs are the most useful places to start. See [CONTRIBUTING.md](CONTRIBUTING.md), the [good first issues](https://github.com/um1b/kitebook/issues?q=is%3Aissue+label%3A%22good+first+issue%22), and [Discussions](https://github.com/um1b/kitebook/discussions) for questions. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+**Please discuss changes before starting implementation or opening a PR.** Open issues are maintainer backlog items, not an invitation to implement them. Get agreement on the problem and scope in the issue first, and check for an existing PR. Bug reports with reproduction steps are welcome.
+
+Read the [contribution guide](CONTRIBUTING.md) for scope, testing, AI-assisted contributions and review expectations. Accepted code PRs target `dev`. Questions go in [Discussions](https://github.com/um1b/kitebook/discussions). Please follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Learn more
 | Doc | What's in it |
