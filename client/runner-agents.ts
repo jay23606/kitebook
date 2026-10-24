@@ -129,6 +129,8 @@ export function buildArgv(name: string, model: string | null, prompt: string, se
 }
 export function agentEnv(model?: string | null) {
   const env: Record<string, string> = { PATH: PL.envPath(), HOME: process.env.HOME ?? homedir(), TERM: "dumb" };
+  // Preserve the runner's locale and temp location without inheriting unrelated shell credentials.
+  for (const k of ["LANG", "LC_ALL", "TMPDIR"]) { const v = process.env[k]; if (v) env[k] = v; }
   // Windows programs need these to start at all (system folder, temp, the user's profile and app data, how commands resolve)
   if (PL.plat() === "win32") for (const k of ["SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)", "ProgramData", "USERNAME", "USERDOMAIN", "HOMEDRIVE", "HOMEPATH", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS"]) { const v = process.env[k]; if (v) env[k] = v; }
   const ef = cfg.envFile?.replace(/^~/, homedir());
