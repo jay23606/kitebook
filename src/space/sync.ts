@@ -7,20 +7,25 @@ export const SYNC_SCHEMA = `
 create table if not exists sync_replicas(peer text, replica text, path text, version integer, updated text, primary key(peer,replica));
 create table if not exists sync_receipts(peer text, id text, fingerprint text, result text, primary key(peer,id));`;
 type Token = { v: 1; epoch: string; space: string; peer: string; scope: string; prefix: string; mode: "snapshot" | "delta" | "checkpoint"; until: number; from: number; seq: number; path: string };
-const enc = (v: string) => btoa(String.fromCharCode(...new TextEncoder().encode(v))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const dec = (v: string) => new TextDecoder().decode(Uint8Array.from(atob(v.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)));
-const hex = (v: ArrayBuffer) => [...new Uint8Array(v)].map(x => x.toString(16).padStart(2, "0")).join("");
+const enc = (v: Uint8Array) => btoa(String.fromCharCode(...v)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const dec = (v: string) => Uint8Array.from(atob(v.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
 export function syncEpoch(sp: any) {
   sp.sql.exec("insert or ignore into meta values('sync_epoch',?)", crypto.randomUUID());
   return String(sp.sql.exec("select v from meta where k='sync_epoch'").one().v);
 }
-async function key(epoch: string) { return crypto.subtle.importKey("raw", new TextEncoder().encode(epoch), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]); }
-async function pack(t: Token) { const { epoch, ...publicToken } = t; const b = enc(JSON.stringify(publicToken)); return b + "." + hex(await crypto.subtle.sign("HMAC", await key(t.epoch), new TextEncoder().encode(b))); }
+async function key(epoch: string) { return crypto.subtle.importKey("raw", await crypto.subtle.digest("SHA-256", new TextEncoder().encode(epoch)), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]); }
+// A continuation may pass denied paths inside the requested folder. Authenticate AND encrypt it: a signature alone leaks names.
+async function pack(t: Token) {
+  const { epoch, ...publicToken } = t, iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await key(epoch), new TextEncoder().encode(JSON.stringify(publicToken)));
+  return enc(iv) + "." + enc(new Uint8Array(encrypted));
+}
 async function unpack(raw: any, epoch: string): Promise<Token | null> {
   try { if (typeof raw !== "string" || raw.length > 16384) return null;
-    const [b, s, extra] = raw.split("."); if (extra || !/^[a-f0-9]{64}$/.test(s)) return null;
-    const valid = await crypto.subtle.verify("HMAC", await key(epoch), Uint8Array.from(s.match(/../g)!, x => parseInt(x, 16)), new TextEncoder().encode(b));
-    const t = JSON.parse(dec(b)); return valid && t.v === 1 ? { ...t, epoch } : null;
+    const [nonce, body, extra] = raw.split("."); if (!nonce || !body || extra) return null;
+    const iv = dec(nonce); if (iv.length !== 12) return null;
+    const bytes = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await key(epoch), dec(body));
+    const t = JSON.parse(new TextDecoder().decode(bytes)); return t.v === 1 ? { ...t, epoch } : null;
   } catch { return null; }
 }
 function prefixOf(a: any) { const p = normPath(a.path ?? "shared"); if (!/^(shared|kb|context)(\/|$)/.test(p)) throw new RelayError(400, "sync path must be under shared/, kb/ or context/ (durable files)"); return p; }
@@ -42,8 +47,8 @@ export function syncOps(this: Space): Record<string, Op> {
       const limit = Math.min(500, Math.max(1, Math.floor(Number(a.limit) || 200)));
       // Scan bounded pages before permission filtering. Cursor includes path within a commit, so a wide batch cannot skip entries.
       const rows = (t.mode === "snapshot"
-        ? this.sql.exec(`select c.path,c.sha,b.size,b.enc,c.seq from changes c join (select path,max(seq) seq from changes where seq<=? group by path) l on c.path=l.path and c.seq=l.seq left join blobs b on b.sha=c.sha where c.sha is not null and c.path>? order by c.path limit ?`, t.until, t.path, limit + 1)
-        : this.sql.exec(`select c.path,c.sha,b.size,b.enc,c.seq from changes c left join blobs b on b.sha=c.sha where c.seq>? and c.seq<=? and (c.seq>? or (c.seq=? and c.path>?)) order by c.seq,c.path limit ?`, t.from, t.until, t.seq, t.seq, t.path, limit + 1)).toArray() as any[];
+        ? this.sql.exec(`select c.path,c.sha,b.size,b.enc,c.seq from changes c join (select path,max(seq) seq from changes where seq<=? and (path=? or (path>=? and path<?)) group by path) l on c.path=l.path and c.seq=l.seq left join blobs b on b.sha=c.sha where c.sha is not null and c.path>? order by c.path limit ?`, t.until, t.prefix, t.prefix + "/", t.prefix + "0", t.path, limit + 1)
+        : this.sql.exec(`select c.path,c.sha,b.size,b.enc,c.seq from changes c left join blobs b on b.sha=c.sha where c.seq>? and c.seq<=? and (c.path=? or (c.path>=? and c.path<?)) and (c.seq>? or (c.seq=? and c.path>?)) order by c.seq,c.path limit ?`, t.from, t.until, t.prefix, t.prefix + "/", t.prefix + "0", t.seq, t.seq, t.path, limit + 1)).toArray() as any[];
       const more = rows.length > limit, page = rows.slice(0, limit);
       const entries = page.filter(r => under(r.path, t!.prefix) && this.pathOk(id.m, r.path)).map(r => ({ path: r.path, sha: r.sha, size: r.size, binary: r.enc === "base64", version: r.seq, deleted: r.sha === null }));
       const last = page.at(-1), next: Token = more ? { ...t, seq: last.seq, path: last.path } : { ...t, mode: "checkpoint", from: t.until, seq: t.until, path: "" };
@@ -75,7 +80,7 @@ export function syncOps(this: Space): Record<string, Op> {
       return { version: this.headSeq(), replicas };
     },
     sync_publish: async (peer, a) => {
-      if (!Array.isArray(a.changes) || !a.changes.length || a.changes.length > 2000) throw new RelayError(400, "changes: 1-2000 files");
+      if (!Array.isArray(a.changes) || !a.changes.length || a.changes.length > 500) throw new RelayError(400, "changes: 1-500 files");
       if (!/^[a-zA-Z0-9_-]{1,100}$/.test(String(a.operation_id ?? ""))) throw new RelayError(400, "operation_id: stable identifier required for retries");
       for (const c of a.changes) { prefixOf({ path: c.path }); if (typeof c.if_match !== "string" || !/^(none|[a-f0-9]{64})$/.test(c.if_match)) throw new RelayError(400, "every change needs if_match (previous sha, or none)"); }
       return this.impl.batch(peer, { changes: a.changes, message: a.message, operation_id: a.operation_id });

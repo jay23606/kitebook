@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
@@ -14,7 +14,7 @@ function space() {
   const db = new Database(":memory:"); db.exec(SYNC_SCHEMA + `create table meta(k text primary key,v text); create table commits(seq integer primary key autoincrement,id text); create table changes(seq integer,path text,sha text,primary key(seq,path)); create table blobs(sha text primary key,size integer,enc text,content text);`);
   let paths = ["shared/**", "kb/**"], revoked = false;
   const sp: any = { spaceId: "main", sql: { exec: (q: string, ...a: any[]) => { const st = db.query(q), rows = st.all(...a); return { toArray: () => rows, one: () => { if (rows.length !== 1) throw Error("expected row: " + q); return rows[0]; } }; } },
-    need: () => { if (revoked) throw Error("no read access"); return { paths, verbs: ["read", "write", "delete"] }; },
+    need: (_peer: any, _verb: string, path?: string) => { if (path && !paths.some(p => globMatch(p, path))) throw Error("path denied"); if (revoked) throw Error("no read access"); return { paths, verbs: ["read", "write", "delete"] }; },
     pathOk: (m: any, path: string) => m.paths.some((p: string) => globMatch(p, path)),
     headSeq: () => (db.query("select max(seq) seq from commits").get() as any).seq ?? 0,
     body: async (s: string) => { const r = db.query("select * from blobs where sha=?").get(s) as any; return { enc: r.enc, data: r.content }; },
@@ -49,8 +49,8 @@ test("file recovery ignores notification trimming, binds tokens to scope/epoch/i
   await s.call("sync_ack", { cursor: a.cursor, replica: "sandboxA" }); s.commit([{ path: "shared/b.txt", content: "B" }]); const b = await all(s, a.cursor);
   await s.call("sync_ack", { cursor: b.cursor, replica: "sandboxB" }); expect((await s.call("sync_status", {})).replicas.map((x: any) => x.version).sort()).toEqual([1, 2]);
   expect((await all(s)).entries.length).toBe(2); expect((await s.ops.sync({ ...peer, id: "other" }, { cursor: a.cursor })).reset_required).toBe(true);
-  const token = a.cursor.split("."); const body = JSON.parse(Buffer.from(token[0], "base64url").toString()); expect(body.epoch).toBeUndefined(); body.until = 99;
-  expect((await s.call("sync", { cursor: Buffer.from(JSON.stringify(body)).toString("base64url") + "." + token[1] })).reset_required).toBe(true);
+  const token = a.cursor.split("."), bytes = Buffer.from(token[1], "base64url"); bytes[0] ^= 1;
+  expect((await s.call("sync", { cursor: token[0] + "." + bytes.toString("base64url") })).reset_required).toBe(true);
   s.permissions(["shared/b.txt"]); expect((await s.call("sync", { cursor: b.cursor })).reset_required).toBe(true);
   const limited = await all(s); expect(limited.entries.map((x: any) => x.path)).toEqual(["shared/b.txt"]);
   s.db.query("update meta set v=? where k='sync_epoch'").run(crypto.randomUUID()); expect((await s.call("sync", { cursor: limited.cursor })).reset_required).toBe(true);
@@ -118,4 +118,32 @@ test("a lost acknowledgement is retryable after a fresh client loads the saved c
     expect(status(dir,"server").state).toBe("published");const result=await pull(call,dir,"server");expect(result.downloaded).toBe(0);expect(acks).toBe(2);
     expect(readFileSync(join(dir,"files/shared/a.txt"),"utf8")).toBe("durable");
   }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test("narrow recovery avoids unrelated folder pages and opaque checkpoints do not disclose denied filenames",async()=>{
+  const s=space();s.commit([{path:"shared/private/secret-name.txt",content:"private"},{path:"shared/public.txt",content:"public"},...Array.from({length:20},(_,i)=>({path:`kb/unrelated-${i}`,content:"other"}))]);s.permissions(["shared/public.txt"]);
+  try {const first=await s.call("sync",{path:"shared",limit:1});expect(first.more).toBe(true);expect(first.entries).toEqual([]);
+    for(const token of [first.cursor,first.read_cursor]){expect(token).not.toContain("secret-name");for(const part of token.split("."))expect(Buffer.from(part,"base64url").toString()).not.toContain("secret-name");}
+    const last=await s.call("sync",{cursor:first.cursor,limit:1});expect(last.more).toBe(false);expect(last.entries.map((x:any)=>x.path)).toEqual(["shared/public.txt"]);
+    await expect(s.call("sync_read",{cursor:last.read_cursor,path:"shared/private/secret-name.txt"})).rejects.toThrow();
+    s.commit([{path:"kb/other",content:"unrelated delta"},{path:"shared/public.txt",content:"new"}]);const delta=await s.call("sync",{cursor:last.cursor,limit:1});expect(delta.more).toBe(false);expect(delta.entries.map((x:any)=>x.path)).toEqual(["shared/public.txt"]);
+  }finally{s.db.close();}
+});
+
+test("oversized local publication remains editable instead of persisting an unretryable operation",async()=>{
+  const s=space(),dir=mkdtempSync(join(tmpdir(),"kitebook-size-"));
+  try {await pull(s.call,dir,"server");mkdirSync(join(dir,"files/shared"),{recursive:true});
+    for(let i=0;i<501;i++)writeFileSync(join(dir,`files/shared/${i}.txt`),"small");
+    await expect(publish(s.call,dir,"server")).rejects.toThrow("500 changed files");expect(status(dir,"server").pending_operation).toBe(null);expect(status(dir,"server").state).toBe("local_changes");
+  }finally{s.db.close();rmSync(dir,{recursive:true,force:true});}
+});
+test("receipt replay checks current grants and returns before transforming already-applied edits",async()=>{
+  mock.module("cloudflare:workers",()=>({DurableObject:class {}}));
+  const {fileOps}=await import("../src/space/files.ts"),s=space();let denied=false;
+  const a={operation_id:"edit-once",changes:[{path:"shared/edited.txt",edits:[{old:"before",new:"after"}],if_match:"none"}]};
+  const fingerprint=sha(JSON.stringify({changes:a.changes,message:null}));s.db.query("insert into sync_receipts values(?,?,?,?)").run(peer.id,a.operation_id,fingerprint,JSON.stringify({commit:"saved",shas:{"shared/edited.txt":"sha"}}));
+  s.sp.need=()=>{if(denied)throw Error("revoked");};s.sp.blobAt=()=>{throw Error("must not reapply edits");};
+  const ops=fileOps.call(s.sp);
+  try {expect((await ops.batch(peer,a)).commit).toBe("saved");denied=true;await expect(ops.batch(peer,a)).rejects.toThrow("revoked");}
+  finally{s.db.close();}
 });

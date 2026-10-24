@@ -79,6 +79,7 @@ export async function publish(call: Call, dir: string, remote: string, options: 
       changes.push({ path: p, ...(text !== undefined ? { content: text } : { content_base64: bytes.toString("base64") }), if_match: state.files[p] ?? "none" }); }
     for (const p of Object.keys(state.files)) if (!present.has(p)) changes.push({ path: p, delete: true, if_match: state.files[p] });
     if (!changes.length) return { state: "published", unchanged: true };
+    if (changes.length > 500) throw new Error("publication exceeds 500 changed files; publish smaller folders separately");
     state.pending = { operation_id: randomUUID(), changes, message: options.message ?? "Publish workspace artifacts and handoff" }; save();
   }
   const result = await call("sync_publish", state.pending);

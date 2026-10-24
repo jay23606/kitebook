@@ -191,6 +191,18 @@ export function fileOps(this: Space): Record<string, Op> {
     },
     batch: async (peer, a) => {
       if (!Array.isArray(a.changes) || !a.changes.length || a.changes.length > 500) throw new RelayError(400, "changes: 1-500 entries");
+      if (a.operation_id !== undefined && !/^[a-zA-Z0-9_-]{1,100}$/.test(String(a.operation_id))) throw new RelayError(400, "invalid operation_id");
+      const receipt = a.operation_id ? { id: String(a.operation_id), fingerprint: await sha256(JSON.stringify({ changes: a.changes, message: a.message ?? null })) } : undefined;
+      if (receipt) {
+        // A retry must not reapply string edits/read a now-deleted blob before looking up its committed receipt.
+        for (const c of a.changes) this.need(peer, c.delete ? "delete" : "write", normPath(c.path));
+        const previous = this.sql.exec("select fingerprint,result from sync_receipts where peer=? and id=?", peer.id, receipt.id).toArray()[0] as any;
+        if (previous) {
+          if (previous.fingerprint !== receipt.fingerprint) throw new RelayError(409, "operation_id already used with different changes");
+          const r = JSON.parse(previous.result), warn = a.changes.filter((c: any) => !c.delete && codeWarn(normPath(c.path))).map((c: any) => normPath(c.path));
+          return { commit: r.commit, shas: r.shas, ...(warn.length ? { warning: "code_outside_change", warning_paths: warn.slice(0, 50) } : {}) };
+        }
+      }
       const cs: Change[] = [], skipped: { path: string; reason: string }[] = [];
       for (const c of a.changes) try { cs.push(await (async (): Promise<Change> => {
         const path = normPath(c.path); this.need(peer, c.delete ? "delete" : "write", path);
@@ -212,8 +224,6 @@ export function fileOps(this: Space): Record<string, Op> {
       }
       if (!cs.length) return { commit: null, shas: {}, skipped };
       if (new Set(cs.map(c => c.path)).size !== cs.length) throw new RelayError(400, "one entry per path (put several edits in one entry's edits list)");
-      if (a.operation_id !== undefined && !/^[a-zA-Z0-9_-]{1,100}$/.test(String(a.operation_id))) throw new RelayError(400, "invalid operation_id");
-      const receipt = a.operation_id ? { id: String(a.operation_id), fingerprint: await sha256(JSON.stringify({ changes: a.changes, message: a.message ?? null })) } : undefined;
       const r = await this.commit(peer, cs, a.message ?? `batch ${cs.length} changes`, receipt);
       const warn = cs.filter(c => !c.delete && codeWarn(c.path)).map(c => c.path);
       return { commit: r.commit, shas: r.shas, ...(skipped.length ? { skipped } : {}), ...(warn.length ? { warning: "code_outside_change", warning_paths: warn.slice(0, 50) } : {}) };
