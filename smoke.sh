@@ -934,8 +934,13 @@ cat > $T/fleet.json <<FJ
  "projects":{"ps":{"path":"$PS","agent":"sp","verify":["test -f spec_ok.txt","test -f plan_done.txt","test -f never.txt","nosuchtool-xyz --check"]},"pq":{"path":"$PQ","agent":"ask"},"pg":{"path":"$PG","agent":"steer"},"pr":{"path":"$PR","agent":"fix","verify":["test -f fixed.txt"]},"pa":{"path":"$PA","agent":"par"},"pb":{"path":"$PB","agent":"par"},"pc":{"path":"$PC","agent":"hang"},"pd":{"path":"$PD","agent":"deps"},"pe":{"path":"$PE","agent":"live"},"pf":{"path":"$PF","agent":"pi","verify":["sleep 3 && test -f pi.txt"]},"pm":{"path":"$PM","agent":"gemini"}}}
 FJ
 KITEBOOK_TEST=1 HOME=$T PATH="$T/fakepi:$PATH" bun client/runner.ts $T/fleet.json > $T/fleet.log 2>&1 & RF=$!
-for i in $(seq 1 20); do h cat shared/runners/fleet.json 2>/dev/null | jq -e '.models.mdl' >/dev/null 2>&1 && break; sleep 0.5; done
-h cat shared/runners/fleet.json | jq -e '.models.mdl==["fast-1","smart-2"] and .model_catalogs.mdl.authoritative and .model_catalogs.mdl.source=="native" and (.model_catalogs.claude.authoritative|not) and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
+FLEET_AD=""
+for i in $(seq 1 20); do
+  if FLEET_AD=$(h cat shared/runners/fleet.json 2>/dev/null) && [ -n "$FLEET_AD" ] && jq -e '.models.mdl' <<< "$FLEET_AD" >/dev/null 2>&1; then break; fi
+  sleep 0.5
+ done
+# jq may succeed without producing any output when its input is empty; the fetch and nonempty checks are part of readiness.
+[ -n "$FLEET_AD" ] && printf '%s\n' "$FLEET_AD" | jq -e '.models.mdl==["fast-1","smart-2"] and .model_catalogs.mdl.authoritative and .model_catalogs.mdl.source=="native" and (.model_catalogs.claude.authoritative|not) and (.models.claude|index("sonnet")) and .max_parallel==3 and .cancel' >/dev/null || { h cat shared/runners/fleet.json; cat $T/fleet.log; die "model advertise"; }
 BAD_MODEL=$(h task_create --target fleet --title x --instructions y --project pa --agent mdl --model nope 2>&1 || true)
 printf '%s\n' "$BAD_MODEL" | grep -q "models: fast-1, smart-2" || { printf '%s\n' "$BAD_MODEL"; h describe | jq '{runners:[.runners[]|select(.name=="fleet")|{name,agents,models,model_catalogs}]}'; die "bad model"; }
 h task_create --target fleet --title x --instructions y --project pa --agent nope 2>&1 | grep -q "agents: pi, codex, claude" || die "bad agent"
