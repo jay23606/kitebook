@@ -170,4 +170,10 @@ Local coding agents should use the local listener. For remote assistants, addres
 
 Prefer a supported no-domain path when verified. A custom domain is a compatibility fallback for restrictive hosts, not a requirement for every agent. Quick-tunnel URLs can change on restart, so a successful connection does not establish a stable address. Do not expose a service or join an assistant to your tailnet automatically. Settings → Connection shows the compatibility evidence and its limits. `kitebook mcp diagnose` separates DNS/TLS/network failures from expired credentials or denied permissions, from the client where it runs; it cannot detect another provider's hostname allowlist. Provider-specific live verification remains tracked in #19.
 
+### Tunnel limits for daily use
+
+The built-in [Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) is intended for testing: the URL changes on each new tunnel, there is no uptime guarantee, and SSE is unsupported. Use a named tunnel and a stable hostname when daily agents depend on it. A working health request alone does not verify streaming or provider acceptance.
+
+[ngrok's free plan](https://ngrok.com/docs/pricing-limits/free-plan-limits) provides one assigned development domain, with 20,000 HTTP requests and 1 GB of outgoing data per month as checked on 2026-10-24. Its HTML browser warning does not apply to programmatic API requests. Those quotas are shared by all traffic: a hypothetical poll every 60 seconds for 30 days makes 43,200 requests before any useful work, already above the free request quota. This is a sizing example, not Kitebook's default polling behavior; prefer supported events or bounded long polls and check the provider's current limits.
+
 See [discovery and restart lifecycle](agent-discovery.md) for models, native conversation status and MCP refresh.

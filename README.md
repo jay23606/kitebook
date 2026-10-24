@@ -25,9 +25,9 @@ Kitebook does two things for one person who uses many agents:
    ```
    Windows (PowerShell): `irm https://raw.githubusercontent.com/um1b/kitebook/main/scripts/get.ps1 | iex`. It starts Kitebook, finds the coding agents you already have and opens Kitebook in your browser, signed in.
 2. **Connect an assistant.** In Kitebook, open **Settings → Connection**, press **Turn on public access**, and give the `https://…/mcp` link it shows to your assistant (Hark, Muse, Grok bot) as an MCP connector, and keep the recommended **Read everything, save to shared memory, send tasks**.
-3. **Send a task.** *"Use Kitebook to add a How to run it section to my project's README."* Approve it when asked; a branch and a summary come back, and every connected agent can see them.
+3. **Share context.** Ask an assistant to save a project note in Kitebook, then have another assistant read it. For files and datasets that must survive a sandbox restart, use [workspace pull/publish](docs/workspace-sync.md). Coding tasks are optional: ask for a change, approve it when prompted, and get a branch and summary back.
 
-Every step in detail: [docs/quickstart.md](docs/quickstart.md).
+Every step in detail: [docs/quickstart.md](docs/quickstart.md). The installer uses a source checkout; prebuilt binaries and Homebrew packages are planned, with availability tracked in [releases](docs/releases.md). This page follows its current branch; the installer follows stable `main`, so features on `dev` arrive there after promotion.
 
 ## How it works
 
@@ -118,10 +118,21 @@ Full model: [docs/security.md](docs/security.md). Report problems privately: [SE
 
 ## Self-host
 Kitebook is one server you own. Pick one:
-- **Your Mac** (default): the one-line install runs the server and the runner together. Public access uses a built-in tunnel.
+- **Your Mac** (default): the one-line install runs the server and runner together. Public access is off until you enable it; the built-in quick tunnel uses a temporary address.
 - **Cloudflare Workers**: [four commands](docs/setup.md#deploy-to-cloudflare), then connect your Mac from `/start`.
-- **workerd / Docker on any box**: `scripts/serve.sh` or the Docker image ([docs/storage.md](docs/storage.md), [docs/releases.md](docs/releases.md)).
+- **workerd / Docker on any box**: run `scripts/serve.sh` from source, or build the server image locally. A published image is not part of the current install path ([storage](docs/storage.md), [build instructions](docs/releases.md#docker-build-from-source)).
 - **Local try-out** (cloud assistants can't reach it): `./scripts/quickstart.sh`.
+
+## Public access and stable addresses
+
+| Option | What to expect |
+|---|---|
+| Built-in Cloudflare quick tunnel | No domain or account needed to try it. Its URL changes on restart, and it does not support SSE. |
+| Cloudflare named tunnel with your domain | A stable address for daily use. Configure the token and hostname in Settings → Connection. |
+| Tailscale Funnel | Public HTTPS on `ts.net`; an assistant may still reject that hostname. Private Tailscale Serve requires tailnet access. |
+| ngrok | An assigned development domain; the free plan has request/data quotas and an HTML browser warning page. |
+
+Use the local address for coding agents on the same computer. A remote assistant needs reachable HTTPS and must accept the hostname; you may need your own domain if its provider blocks shared tunnel addresses. Hark's `ts.net` rejection is owner-reported, while Muse's acceptance remains unverified. See [connection compatibility](docs/setup.md#address-compatibility-and-avoiding-a-domain) for evidence, limits and diagnostics, plus the providers' [Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/) and [ngrok](https://ngrok.com/docs/pricing-limits/free-plan-limits) documentation.
 
 ## Develop and test
 ```bash
@@ -149,7 +160,7 @@ Read the [contribution guide](CONTRIBUTING.md) for scope, testing, AI-assisted c
 | [docs/git.md](docs/git.md) | Branches, commits, diffs and pull requests |
 | [docs/agents.md](docs/agents.md) | For agents: endpoints, MCP tools, the op list |
 | [docs/security.md](docs/security.md) | The security model |
-| [docs/releases.md](docs/releases.md) | Binaries, updates, Homebrew, Docker |
+| [docs/releases.md](docs/releases.md) | Current install options, planned packages, local Docker builds |
 | [docs/storage.md](docs/storage.md) | Where data lives, self-hosting, cost |
 | [docs/glossary.md](docs/glossary.md) | Words used on screen |
 

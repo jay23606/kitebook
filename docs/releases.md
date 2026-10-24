@@ -1,71 +1,53 @@
-# Prebuilt releases, updates, Homebrew and Docker
+# Install options, planned releases and Docker
 
-Kitebook ships as one compiled `kitebook` binary per platform on [GitHub Releases](https://github.com/um1b/kitebook/releases), so the machine that
-runs the runner needs no git clone, no bun or node and no build step. The server ships as a Docker image. A git checkout stays the
-developer path (and still hosts a server with `scripts/serve.sh`).
+## Available now
 
-| Platform | Release file |
+The current install path is the [source-based installer](../README.md#quick-start), which installs the runtime and builds Kitebook from a git checkout. A checkout can also host the server with [`scripts/serve.sh`](../scripts/serve.sh).
+
+Availability checked on **2026-10-24**: [GitHub Releases](https://github.com/um1b/kitebook/releases) contains the `v0.0.1` preview with no binary assets. Prebuilt binaries, a Homebrew tap and an automatically published server image are planned distribution paths, not prerequisites or advertised downloads for this preview. This public checkout includes local build helpers and a Dockerfile, but no `.github/workflows/release.yml` publishing workflow. Check the release's actual assets before attempting a binary install.
+
+## Planned binaries and Homebrew
+
+[`scripts/release-build.ts`](../scripts/release-build.ts) can compile the CLI/runner, generate checksums, sign them and generate a Homebrew formula. The intended artifacts are:
+
+| Platform | Build output |
 | --- | --- |
 | macOS Apple silicon / Intel | `kitebook-darwin-arm64` / `kitebook-darwin-x64` |
 | Linux x64 / arm64 | `kitebook-linux-x64` / `kitebook-linux-arm64` |
 | Windows x64 | `kitebook-windows-x64.exe` |
 
-Every release also has `SHA256SUMS` and `SHA256SUMS.sig` (an Ed25519 signature by the release key over the sums, the release number and
-the version).
+These are output names, not a claim that downloadable files exist. A future published release must also supply `SHA256SUMS` and `SHA256SUMS.sig`. Until those exist, use the source installer rather than `/releases/latest/download/...` or `brew install um1b/tap/kitebook`.
 
-## What the binary is
-`client/kitebook-bin.ts`, compiled with `bun build --compile`: the server CLI (`kitebook status`, ops, `kitebook kb ...`), the runner
-(`kitebook runner <runner.json>`) and the self-updater. `kitebook version` says which release it is. The server (workerd + the built Worker)
-isn't in it, because workerd is its own ~100 MB native program per platform; run the server from Docker or a checkout.
-That is also why a Mac that hosts its own server still installs from a git checkout; that moves to the binary once the server ships
-inside it (or next to it). Until then the binary is for a runner-only machine or a hand install.
-
-## Install by hand
-```bash
-# pick your platform's file from the table above
-curl -fsSLO https://github.com/um1b/kitebook/releases/latest/download/kitebook-darwin-arm64
-curl -fsSLO https://github.com/um1b/kitebook/releases/latest/download/SHA256SUMS
-curl -fsSLO https://github.com/um1b/kitebook/releases/latest/download/SHA256SUMS.sig
-grep ' kitebook-darwin-arm64$' SHA256SUMS | shasum -a 256 -c -
-chmod +x kitebook-darwin-arm64 && ./kitebook-darwin-arm64 install --sums SHA256SUMS --sig SHA256SUMS.sig   # -> ~/.kitebook-app/bin/kitebook
-```
-`kitebook install` checks the signature with the release key built into the binary and its own sha256 against the signed list, then puts
-itself in `~/.kitebook-app/bin` (add that folder to your PATH). The first download is only as trustworthy as HTTPS to github.com (like any
-`curl | sh`); every update after that is checked against the key this install already has.
-Homebrew: `brew install um1b/tap/kitebook` (then `brew upgrade kitebook`; the self-updater leaves Homebrew installs to brew).
+The compiled [`client/kitebook-bin.ts`](../client/kitebook-bin.ts) contains the CLI, runner and binary self-updater. It does not contain the server or workerd, so a runner-only binary would still need a separately hosted server.
 
 ## Updates
-- `kitebook update`: the newest release on GitHub Releases. It installs only when SHA256SUMS is signed by the release key this install
-  already trusts (`runner.json` `"releaseKey"`, else the key built into the binary, never one the release brings along), the release
-  number is higher than the installed one (no downgrades), and the download matches the signed sha256. The new binary has to start and
-  name the signed version, then it is swapped in with a rename (the running runner keeps its old file) and must pass `kitebook __selftest`
-  from its new place; otherwise the previous binary goes back by itself. The runner restarts on the new binary once its tasks are done.
-- `kitebook update --check` shows what it would do; `kitebook update --rollback` goes back to the version kept from before the last update.
-- Settings -> Updates shows the version, a link to the release notes and **Update now**, and "Install signed updates automatically"
-  (on by default) installs signed newer releases when the runner is idle. An agent's `relay_update` installs the same, and nothing else.
-- Channels: stable follows the newest release (`/releases/latest`). `kitebook update --channel dev` (or `runner.json` `"updateChannel": "dev"`)
-  follows the rolling `dev` prerelease built from the dev branch; `--channel stable` goes back to following stable from the next stable
-  release that is newer.
-- Where releases come from can be moved for a fork or mirror: `runner.json` `"releaseRepo": "you/kitebook"` (or `"releasesApi"`).
 
-## Docker (the server)
+- **Source installs, available now:** `kitebook update` moves the existing checkout to its followed channel (`main` for stable, `dev` when selected), checks the new runner/server and rolls back on failure. Settings → Updates exposes the same update path. See [runner updates](runner.md#safe-updates).
+- **Binary installs, after publication:** the implemented updater verifies the pinned release key, signed checksums, an increasing release number and the new binary's self-test before replacing the old binary. These checks do not make missing release assets available. Homebrew-managed installs would update through Homebrew.
+
+## Docker: build from source
+
+The [`Dockerfile`](../Dockerfile) and [`docker-compose.yml`](../docker-compose.yml) build the server locally. From a source checkout, build it before starting it; do not rely on a published `ghcr.io/um1b/kitebook` tag:
+
 ```bash
-docker compose up -d                                     # ghcr.io/um1b/kitebook, http://127.0.0.1:7820, data in the relay-data volume
-docker compose exec kitebook cat /data/admin-token          # the admin token (recovery code), made on first start unless KITEBOOK_ADMIN_TOKEN is set
-TUNNEL_TOKEN=... docker compose --profile tunnel up -d   # optional public address through a Cloudflare tunnel (route it to http://kitebook:7821, the public edge listener; 7820 stays local)
+docker compose build kitebook
+docker compose up --pull never -d kitebook
 ```
-The image is workerd with the built Worker, running as a non-root user, with a `/health` check. The runner deliberately stays native:
-it drives the coding agents, repositories, git credentials and keychain on your own computer, which a container can't (and shouldn't)
-reach.
 
-## Making a release (maintainers)
-`.github/workflows/release.yml` builds on every push to dev (the rolling `dev` prerelease) and on a `v*` tag (a stable release):
-compiles all five binaries from one Linux runner, signs SHA256SUMS, generates `kitebook.rb` for the tap, starts each binary on its own OS
-(macOS arm64 + x64, Linux arm64, Windows) and builds the server image. **Nothing is published until the repository variable
-`RELEASES_ENABLED` is `true`.** One-time setup:
-1. `kitebook release-key create` (keeps the private key in your keychain), then put the public key in the repository variable
-   `KITEBOOK_RELEASE_PUBKEY` and the private key (PEM) in the secret `KITEBOOK_RELEASE_SIGNING_KEY`.
-2. For Homebrew: create `um1b/homebrew-tap` and a token that can push to it as the secret `HOMEBREW_TAP_TOKEN`.
-3. Set `RELEASES_ENABLED=true`, then `git tag v0.1.0 && git push origin v0.1.0`.
+The existing Compose file tags the local build with the registry-style name. `--pull never` uses that local image. The dashboard listens at `http://127.0.0.1:7820`; data stays in the `relay-data` volume. If you need the server's recovery code, read `/data/admin-token` inside the `kitebook` container privately; never share it with an assistant.
 
-Locally: `bun scripts/release-build.ts build --version v0.1.0 --targets linux-x64` then `sign`, `verify`, `formula` (see the script's header).
+For public access, configure the optional `tunnel` profile with your Cloudflare tunnel token and route its hostname to `http://kitebook:7821`, the public edge listener. Port 7820 stays local. See [storage and ingress](storage.md) before exposing a server.
+
+The image runs workerd and the built Worker as a non-root user, with a `/health` check. The runner stays native on your computer because it needs your coding agents, repositories and OS credentials. Starting a server container alone does not install a runner.
+
+## Preparing publication (maintainers)
+
+Local tooling is implemented; release automation still needs to be supplied and verified. For example, from a checkout with Bun installed:
+
+```bash
+bun scripts/release-build.ts build --version v0.1.0 --targets linux-x64
+```
+
+The helper also provides `sign`, `verify` and `formula` commands; see its header for arguments. Signing requires a maintainer-controlled release key. Never commit or post private signing material.
+
+Before advertising packages, publish and verify the binary assets plus signed sums, test downloads and updates on the target operating systems, create and test the Homebrew tap, and publish/test the server image tags. Merely setting `RELEASES_ENABLED=true` or pushing a tag cannot publish anything without a configured workflow.
