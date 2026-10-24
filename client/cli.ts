@@ -173,7 +173,19 @@ function runnerConfig(argv: string[]) {
 const MAIN = import.meta.main || (globalThis as any).__relayEntry === "cli"; // run directly, or from the kitebook binary (client/kitebook-bin.ts)
 if (MAIN) (await import("./rebrand.ts")).migrateDirs(); // an install from before the rename: its folders move to the new names first (client/rebrand.ts)
 // kitebook, kitebook help, kitebook --help: the short help (client/brand.ts); the long list of workspace commands is kitebook ops
-if (MAIN && [undefined, "help", "--help", "-h"].includes(process.argv[2])) { const { HELP } = await import("./brand.ts"); console.log(HELP); process.exit(0); }
+if (MAIN && ([undefined, "help"].includes(process.argv[2]) && !process.argv[3] || ["--help", "-h"].includes(process.argv[2]))) { const { HELP } = await import("./brand.ts"); console.log(HELP); process.exit(0); }
+if (MAIN && process.argv[2] === "help" && process.argv[3]) {
+  const { OPS } = await import("../src/ops.ts"), op = process.argv[3];
+  if (!Object.hasOwn(OPS, op)) {
+    const distance = (a: string, b: string) => { const row = Array.from({ length: b.length + 1 }, (_, i) => i); for (let i = 1; i <= a.length; i++) { let prev = row[0]; row[0] = i; for (let j = 1; j <= b.length; j++) { const old = row[j]; row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = old; } } return row[b.length]; };
+    const closest = Object.keys(OPS).map(k => [k, distance(op, k)] as const).sort((a, b) => a[1] - b[1]).slice(0, 3).map(([k]) => k);
+    console.error(`unknown op ${op}; closest: ${closest.join(", ")}`); process.exit(1);
+  }
+  const meta = OPS[op];
+  console.log(`${op}\n${meta.desc}`);
+  for (const [name, [type, desc, required]] of Object.entries(meta.params)) console.log(`  ${name}: ${type}${required ? " (required)" : " (optional)"} — ${desc}`);
+  process.exit(0);
+}
 if (MAIN && OWNER.has(process.argv[2] ?? "")) {
   const argv = process.argv.slice(2), cfg = runnerConfig(argv);
   if (argv.includes("--help") || argv.includes("-h")) { const { HELP, CLI } = await import("./brand.ts"); console.log(HELP.split("\n").filter(l => l.includes(`${CLI} ${argv[0]}`)).join("\n") || HELP); process.exit(0); }
