@@ -73,6 +73,33 @@ with sync_playwright() as pw:
         check(page.evaluate('document.documentElement.scrollWidth <= innerWidth+1'), 'no page overflow at '+str(width))
     page.set_viewport_size({'width':390,'height':844}); page.screenshot(path=str(out/'knowledge-mobile.png'), full_page=True)
     page.emulate_media(color_scheme='dark'); page.screenshot(path=str(out/'knowledge-dark.png'), full_page=True)
+    # A delayed save completion must not replace an editor opened after that save began.
+    page.set_viewport_size({'width':1440,'height':1000})
+    race = api('save', {'title':'Delayed save fixture','kind':'fact','text':'Before delayed save'}, nonce()).json()['result']['entries'][0]
+    page.locator('#memory-refresh').click(); page.locator('.memory-item').filter(has_text='Delayed save fixture').click()
+    page.locator('#memory-detail').get_by_role('button',name='Edit note',exact=True).click(); page.locator('#memory-edit-text').fill('Committed delayed edit')
+    held_save = []
+    def hold_saved_entry(route):
+        try: body = route.request.post_data_json
+        except Exception: body = {}
+        if body.get('op') == 'workspace' and body.get('action') == 'entry' and body.get('args', {}).get('id') == race['id']: held_save.append(route)
+        else: route.continue_()
+    page.route('**/start', hold_saved_entry)
+    old_save = page.locator('#memory-detail').get_by_role('button', name='Save', exact=True)
+    old_save.evaluate('el => window.pendingSaveButton = el'); old_save.click()
+    for _ in range(100):
+        if held_save: break
+        page.wait_for_timeout(20)
+    check(bool(held_save) and page.locator('#memory-edit-text').is_disabled(), 'pending save keeps its submitted fields stable')
+    page.locator('#memory-new').click(); page.locator('#memory-edit-text').fill('A newer unsaved draft')
+    held_save[0].continue_(); page.unroute('**/start', hold_saved_entry)
+    page.wait_for_function('() => !window.pendingSaveButton.disabled')
+    check(page.locator('#memory-edit-text').input_value() == 'A newer unsaved draft', 'late save completion preserves a newer editor')
+    page.locator('#memory-detail').get_by_role('button',name='Cancel',exact=True).click()
+    latest_race = api('entry', {'id':race['id']}).json()['result']
+    assert api('forget', {'id':race['id'],'if_match':latest_race['sha']}, nonce()).json().get('ok')
+    page.locator('.memory-item').filter(has_text='Workspace browser trial').click()
+    page.locator('.document-source > summary').click()
     page.locator('#memory-detail').get_by_role('button',name='Forget note',exact=True).click(); page.wait_for_function("() => document.querySelector('#memory-state').textContent.includes('Removed')")
     check(not any(x['id'] == note['id'] for x in api('knowledge').json()['result']['entries']), 'forgotten entry leaves current knowledge')
     page.locator('#memory-files').click(); page.wait_for_function("() => document.querySelector('#memory-state').textContent.startsWith('shared /')")
