@@ -111,7 +111,13 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
     // an upsert, not insert-or-replace: a changed grant keeps the member's last_seen (else Settings reads a connected app as "not connected yet")
     this.sql.exec("insert into members(peer_id,name,kind,verbs,paths,webhook,revoked) values(?,?,?,?,?,?,?) on conflict(peer_id) do update set name=excluded.name, kind=excluded.kind, verbs=excluded.verbs, paths=excluded.paths, webhook=excluded.webhook, revoked=excluded.revoked", m.id, m.name, m.kind,
       JSON.stringify(m.verbs ?? cur?.verbs ?? []), JSON.stringify(m.paths ?? cur?.paths ?? []), m.webhook ?? cur?.webhook ?? null, m.revoked ?? 0);
+    if (m.terminate) this.metaSet("session_epoch:" + m.id, crypto.randomUUID());
     if (m.revoked) for (const ws of this.ctx.getWebSockets(m.id)) ws.close(4001, "revoked");
+    if (m.revoked && ["assistant","coding_agent"].includes(m.kind)) {
+      for (const r of this.sql.exec("select id from tasks where (from_peer=? or target_peer=?) and state in ('queued','claimed','awaiting_approval','running','needs_input')",m.id,m.id).toArray() as any[])
+        this.cancelTask(this.loadTask(r.id),OWNER,"Connected app disconnected");
+      for (const wake of [...this.waiters]) wake();
+    }
     // An event subscription is a credential: revoking (or rotating) the peer's token ends every subscription and stream it holds,
     // and a narrowed grant ends the ones it no longer covers.
     if (m.terminate) this.evEndPeer(m.id, new EventsError(CODES.Forbidden, "Forbidden", { reason: m.terminate }));
@@ -140,7 +146,7 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
     const env = this.metaJ("policy"), log = this.metaJ("policy_log", []) as any[];
     const rows = this.sql.exec("select * from members where revoked=0 order by name").toArray() as any[], apps: any[] = [], runners: any[] = [], projects = new Set<string>();
     for (const r of rows) { const pr = this.presence(r);
-      if (r.kind !== "runner") { if (r.kind !== "human") apps.push({ name: r.name, kind: r.kind, verbs: JSON.parse(r.verbs), paths: JSON.parse(r.paths), ...(!pr.online && !pr.last_seen ? { never_connected: true } : {}) }); continue; }
+      if (r.kind !== "runner") { if (r.kind !== "human") apps.push({ name: r.name, id: r.peer_id, session_epoch: this.metaJ("session_epoch:" + r.peer_id, ""), kind: r.kind, verbs: JSON.parse(r.verbs), paths: JSON.parse(r.paths), ...(!pr.online && !pr.last_seen ? { never_connected: true } : {}) }); continue; }
       const ad = await this.runnerAd(r.name); for (const p of Object.keys(ad?.projects ?? {})) projects.add(p);
       runners.push({ name: r.name, online: pr.online, projects: Object.keys(ad?.projects ?? {}).sort(), owner_keys: ad?.policy?.owner_keys ?? null, seq: ad?.policy?.seq ?? null, error: ad?.policy?.error ?? null,
         settings: this.metaJ("rset:" + r.name), approve_ways: Array.isArray(ad?.approve_ways) ? ad.approve_ways : null,
@@ -170,6 +176,12 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
     log.push({ id, at: now(), seq: env.policy.seq, app: rec.app, summary, prev: { entry: prev, caps: changed ? rec.prev_caps : null }, next: { entry: next, caps: changed ? rec.next_caps : null }, ...(undo ? { undo_of: undo.id } : {}) });
     if (undo) undo.undone_by = id;
     this.metaSet("policy", env); this.metaSet("policy_log", log.slice(-100));
+    if (canon([prev?.sessions,prev?.session_rule]) !== canon([next?.sessions,next?.session_rule])) {
+      const m = this.sql.exec("select peer_id from members where name=?",rec.app).toArray()[0] as any;
+      if (m) for (const row of this.sql.exec("select id from tasks where from_peer=? and session is not null and state in ('queued','claimed','awaiting_approval','running','needs_input')",m.peer_id).toArray() as any[])
+        this.cancelTask(this.loadTask(row.id),OWNER,"Session permission changed; resend under the current permission");
+      for (const wake of [...this.waiters]) wake();
+    }
     this.emit("policy.updated", OWNER, { data: { app: rec.app, seq: env.policy.seq, summary } });
     return { id, seq: env.policy.seq, summary };
   }

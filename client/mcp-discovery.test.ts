@@ -19,14 +19,15 @@ test("MCP revisions match actual caller tools, respond to permission/schema/brie
 });
 function fixture() {
   const db = new Database(":memory:"); db.run("create table members(peer_id text, name text, kind text, revoked integer)"); db.run("insert into members values('app','hark','assistant',0),('runner','mac','runner',0)");
+  let project = "first", scoped = false, narrowInWait = false;
   let level: string | undefined = "read", revoked = false, revokeInWait = false, op: any, response: any = { id: "native-id", agent: "codex", model: null }, online = true, capable = true;
   const app: any = { id: "app", name: "hark", kind: "assistant" }, runner: any = { id: "runner", name: "mac", kind: "runner" };
   const sp: any = { spaceId: "main", sql: { exec: (q: string,...a: any[]) => ({toArray:()=>db.query(q).all(...a)}) }, member:()=>({kind:"assistant",revoked:revoked?1:0}),
-    need:()=>{if(revoked) throw new Error("revoked");}, metaJ:(key:string)=>key==="policy"?{policy:{apps:{hark:{sessions:level}}}}:[],metaSet:()=>{},presence:()=>({online}),
+    need:()=>{if(revoked) throw new Error("revoked");}, metaJ:(key:string,fallback:any=[])=>key==="policy"?{policy:{apps:{hark:scoped?{sessions:"off",session_rule:{v:1,peer:"app",epoch:"",projects:[project],access:"read",approval:"auto",keys:[]}}:{sessions:level}}}}:fallback,metaSet:()=>{},presence:()=>({online}),
     runnerAd:async()=>({agents:["codex"],models:{codex:["legacy"]},sessions:{v:1},...(capable?{model_discovery:{v:1}}:{})}), waiters: [],
-    emit:(name:string,_p:any,d:any)=>{if(name==="sessions.requested") op=d.data;}, wait:async()=>{ const q=await ops.sessions_take(runner,{id:op.id}); expect(q.op).toBe(op.op); await ops.sessions_reply(runner,{id:op.id,result:response}); if(revokeInWait) { level="off"; revokeInWait=false; }; },
+    emit:(name:string,_p:any,d:any)=>{if(name==="sessions.requested") op=d.data;}, wait:async()=>{ const q=await ops.sessions_take(runner,{id:op.id}); expect(q.op).toBe(op.op); await ops.sessions_reply(runner,{id:op.id,result:response}); if(revokeInWait) { level="off"; revokeInWait=false; }; if(narrowInWait){project="second";narrowInWait=false;} },
   }; const ops=sessionOps.call(sp);
-  return {ops,app,runner,change:(x:any)=>{if("level" in x)level=x.level;if(x.revokeInWait)revokeInWait=true;if(x.revoked)revoked=true;if(x.response)response=x.response;if(x.online!==undefined)online=x.online;if(x.capable!==undefined)capable=x.capable;}, db};
+  return {ops,app,runner,change:(x:any)=>{if(x.scoped)scoped=true;if(x.narrowInWait)narrowInWait=true;if("level" in x)level=x.level;if(x.revokeInWait)revokeInWait=true;if(x.revoked)revoked=true;if(x.response)response=x.response;if(x.online!==undefined)online=x.online;if(x.capable!==undefined)capable=x.capable;}, db};
 }
 test("session metadata is denied without read grant and withheld if grant/member is revoked while the runner answers", async()=>{
   const f=fixture(), args={agent:"codex",session_id:"native-id"};
@@ -55,4 +56,11 @@ test("WebSocket callers can check the current workspace MCP contract without byp
   const ops=peerOps.call(sp);sp.impl={...ops,describe:async()=>({sessions:{allowed:"off"}}),brief:async()=>({text:""}),task_list:async()=>({tasks:[]})};
   const peer:any={id:"a",name:"hark",kind:"assistant"};expect((await ops.mcp_status(peer,{})).tools).toContain("agent_models");
   permitted=false;await expect(ops.mcp_status(peer,{})).rejects.toThrow(/read denied/);
+});
+
+test("a scoped session response is withheld when scope changes after the runner replies",async()=>{
+ const f=fixture();f.change({scoped:true,narrowInWait:true});
+ await expect(f.ops.session_status(f.app,{agent:"codex",session_id:"native-id"})).rejects.toThrow(/permission changed before delivery/);
+ // A fresh request uses the new permission; no stale result survives into it.
+ expect((await f.ops.session_status(f.app,{agent:"codex",session_id:"native-id"})).id).toBe("native-id");f.db.close();
 });

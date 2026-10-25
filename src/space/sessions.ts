@@ -1,3 +1,5 @@
+import { canon } from "../../client/payload.ts";
+import { sessionLevel } from "../../client/session-policy.ts";
 // Space ops: the owner's LOCAL agent sessions (live-sessions). sessions_search / session_get read the owner's own Codex, Claude Code, Pi,
 // Gemini, Copilot, opencode and Cursor sessions on their computer; session_create / session_send start or continue a coding-agent session
 // through the normal task machinery (worktree, approvals, results, the live driver when the runner has one).
@@ -12,7 +14,6 @@
 import { RelayError, sha256, type Peer } from "../ops.ts";
 import { ACTIVE, now, rid, redact } from "./util.ts";
 import type { Space, Op } from "../space.ts";
-import { sessionsOf } from "../../client/payload.ts";
 
 export const SESSION_AGENTS = ["codex", "claude", "pi", "gemini", "copilot", "opencode", "cursor"];
 export const LEVELS = ["off", "read", "write"];
@@ -24,7 +25,7 @@ const clamp = (v: any, lo: number, hi: number, d: number) => { const n = Number(
 const str = (v: any, n: number) => v == null ? null : String(v).slice(0, n);
 
 // What the owner allowed this app (kitebook's view of the signed policy; the runner re-checks the signature): off | read | write
-export function sessionsLevel(sp: Space, app: string): string { return sessionsOf(sp.metaJ("policy")?.policy?.apps?.[app]); }
+export function sessionsLevel(sp: Space, app: string): string { const e = sp.metaJ("policy")?.policy?.apps?.[app], m = sp.sql.exec("select peer_id,revoked from members where name=?", app).toArray()[0] as any; return sessionLevel(e, { peer: m?.peer_id ?? "", epoch: m ? sp.metaJ("session_epoch:" + m.peer_id, "") || "" : "", connected: !!m && !m.revoked }); }
 export function needSessions(sp: Space, peer: Peer, want: "read" | "write") {
   const m = sp.member(peer.id); if (!m || m.revoked) throw new RelayError(403, `no access to workspace ${sp.spaceId}`);
   if (m.kind === "runner" || m.kind === "human") throw new RelayError(403, "the session tools are for assistants and coding agents");
@@ -53,16 +54,18 @@ export function sessionOps(this: Space): Record<string, Op> {
     for (const [k, p] of pending) if (Date.now() - p.at > KEEP_MS) pending.delete(k);
     const tgt = await runnerFor(this, args.to, op !== "models"), id = rid("sx");
     if ([...pending.values()].filter(p => p.space === this.spaceId).length >= 32) throw new RelayError(429, "too many pending discovery/session requests; retry later");
+    const permission = () => canon([this.metaJ("policy")?.policy?.apps?.[peer.name],this.metaJ("session_epoch:"+peer.id, "")]), before = op === "models" ? null : permission();
     pending.set(id, { space: this.spaceId, runner: tgt.name, from: peer.name, op, args, at: Date.now(), res: null });
     this.emit("sessions.requested", peer, { data: { id, op, target: tgt.name } }); // only that runner (and the asker) see it: Space.visible
     const end = Date.now() + WAIT_MAX * 1000;
-    try { for (;;) { const p = pending.get(id); if (p?.res) { if (!p.res.ok) throw new RelayError(p.res.error?.startsWith("refused") ? 403 : 400, String(p.res.error)); if (op === "models") this.need(peer, "read"); else needSessions(this, peer, "read"); return { computer: tgt.name, ...p.res.result }; }
+    try { for (;;) { const p = pending.get(id); if (p?.res) { if (!p.res.ok) throw new RelayError(p.res.error?.startsWith("refused") ? 403 : 400, String(p.res.error)); if (op === "models") this.need(peer, "read"); else { needSessions(this, peer, "read"); if (permission() !== before) throw new RelayError(403,"session permission changed before delivery; retry under the current scope"); } return { computer: tgt.name, ...p.res.result }; }
         const left = (end - Date.now()) / 1000; if (left <= 0.05) throw new RelayError(504, `${tgt.name} didn't answer within ${WAIT_MAX} s (it may be offline or asleep); try again later`);
         await this.wait(Math.min(left, 5)); } }
     finally { pending.delete(id); }
   };
   const taskArgs = async (peer: Peer, a: any, sess: any, title: string, text: string) => {
     const tgt = await runnerFor(this, a.to);
+    if (this.metaJ("policy")?.policy?.apps?.[peer.name]?.session_rule && (await this.runnerAd(tgt.name))?.sessions?.v !== 2) throw new RelayError(409,"Update this computer’s Kitebook runner to use scoped session permissions");
     if (a.project == null && a.repo == null) { // a checkout folder (session_create cwd, or a session's cwd from sessions_search): its project, by path hash
       if (a.cwd == null || !String(a.cwd).trim()) throw new RelayError(400, "which checkout? give project, repo, or cwd (a session's cwd from sessions_search)");
       const roots = (await this.runnerAd(tgt.name))?.sessions?.roots ?? {}, parts = String(a.cwd).replace(/\/+$/, "").split("/");
@@ -124,22 +127,23 @@ export function sessionOps(this: Space): Record<string, Op> {
         // parked on the agent's question: the text is the answer (task_steer refuses a parked task; task_answer resumes the same session)
         if (how === "answer") { const r = await this.answerTask(t, peer, text); return { ...r, how, task: t.id }; }
         if (ACTIVE.includes(t.state)) { const r = await this.impl.task_steer(peer, { space: a.space, id: t.id, message: text }); return { ...r, how: "steer", task: t.id }; }
-        const r = await this.impl.task_create(peer, { space: a.space, target: t.target, title: str(a.title, 200) ?? t.title, instructions: text, continue_from: t.id, ...(t.agent ? { agent: t.agent } : {}) });
+        const args = { space: a.space, target: t.target, title: str(a.title, 200) ?? t.title, instructions: text, continue_from: t.id, ...(t.agent ? { agent: t.agent } : {}) }; SESSION_ARGS.set(args,{ mode: "new",agent: t.agent ?? a.agent });
+        const r = await this.impl.task_create(peer, args);
         return { ...r, how: "continue", continues: t.id };
       }
-      // one of the OWNER's own sessions: a fork (a new copy, then continue) is the default and the only automatic mode; steer = continue that
-      // very session in place, which the runner refuses while it's open anywhere and always asks the owner for
+      // The default is a copy. Requesting an original follows the signed session rule; activity checks remain local to the runner.
       needSessions(this, peer, "write");
       const agent = String(a.agent ?? ""); if (!SESSION_AGENTS.includes(agent)) throw new RelayError(400, `agent: one of ${SESSION_AGENTS.join(", ")} (the agent the session belongs to)`);
       const how = mode === "steer" ? "continue" : "fork";
       audit(this, peer, "write", "session_send", { agent, id: str(id, 200), how });
       const r = await this.impl.task_create(peer, await taskArgs(peer, a, { mode: how, agent, from: id.slice(0, 200) }, str(a.title, 200) ?? `${how === "fork" ? "Fork of" : "Continue"} ${agent} session ${id.slice(0, 12)}: ${text.split("\n")[0].slice(0, 70)}`, text));
       return { ...r, how, session: { mode: how, agent, from: id, task: r.id },
-        note: how === "fork" ? "A copy of the owner's session continues as a new Kitebook session; the original is never written." : "The owner is asked first; refused if the session is open anywhere (use the default fork instead)." };
+        note: how === "fork" ? "A copy of the owner's session continues as a new Kitebook session; the original is never written." : this.metaJ("policy")?.policy?.apps?.[peer.name]?.session_rule ? "The runner checks your saved session limits; running or uncertain originals use a copy, and work outside those limits asks the owner." : "The owner is asked first; refused if the session is open anywhere (use the default fork instead)." };
     },
     // ---- runner side ----
     sessions_take: async (peer, a) => {
       const p = pending.get(String(a.id ?? "")); if (!p || p.space !== this.spaceId || p.runner !== peer.name || peer.kind !== "runner") throw new RelayError(404, "no such session request (it expired)");
+      const m = this.sql.exec("select peer_id,name,kind from members where name=?", p.from).toArray()[0] as any; if (p.op !== "models") { if (!m) throw new RelayError(403, "session access ended"); needSessions(this, { id: m.peer_id, name: m.name, kind: m.kind }, "read"); }
       return { id: a.id, op: p.op, from: p.from, args: p.args };
     },
     sessions_reply: async (peer, a) => {

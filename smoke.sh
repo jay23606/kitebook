@@ -2190,7 +2190,7 @@ for i in $(seq 1 20); do jq -e --arg k "$K2" '.ownerKeys|index($k)==null' $PC2 >
   && pass "headless Chromium: a new browser sees 'Your Mac doesn't know this browser yet'; Trust in a trusted browser makes the Mac trust it, Forget removes it (kitebook and Mac), all by click" || { cat $T/bs5.out $T/bs6.out $T/bs7.out $T/im.log 2>/dev/null; pol; jq -c '.result.owner_keys|map(.label)' $T/pol.json; die "settings trust"; }
 # (g) Remove an app by click (two taps); its token stops working
 IMG=$(jq -r '.mcpServers.kitebook.headers.Authorization' $IMH/.gemini/settings.json | sed 's/^Bearer //')
-BS8=0; bset --click "#app-gemini summary" --click "#rm-gemini" --click "#rm-gemini" --expect "gemini is removed." --wait 15 > $T/bs8.out 2>&1 || BS8=$?
+BS8=0; bset --click "#rm-gemini" --click "#rm-gemini" --linger 2 --count "#app-gemini=0" --wait 15 > $T/bs8.out 2>&1 || BS8=$?
 [ $BS8 = 0 ] && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $O/v1/whoami -H "authorization: Bearer $IMG" -H 'content-type: application/json' -d '{}')" = 401 ] \
   && pass "headless Chromium: Remove asks once more (Yes, remove gemini), then the app's sign-in stops working" || { cat $T/bs8.out; die "settings remove"; }
 fi
@@ -2261,9 +2261,8 @@ DMH=$(ua peer dmann human 2>/dev/null) && ua grant dmann main read,dispatch "**"
 actp $DM3 cancel >/dev/null
 DMR=$(ua peer dmrev coding_agent 2>/dev/null) && ua grant dmrev main read,dispatch "**" >/dev/null && kill -STOP $IMP && DM4=$(curl -s -X POST $O/v1/task_create -H "authorization: Bearer $DMR" -H 'content-type: application/json' -d '{"target":"imac","title":"dev removed app","instructions":"x","project":"pp"}' | tee $T/dm4.json | jq -r .result.id) \
   && jq -e '.result.needs_approval=="maybe_auto"' $T/dm4.json >/dev/null && ua revoke dmrev >/dev/null; kill -CONT $IMP
-review $DM4 && curl -s -b $SJ $O$R | grep -q "is on, but dmrev isn&#39;t connected any more" && grep -q "\"$DM4\".*autorun_refused\|autorun_refused.*\"$DM4\"" $IH/.kitebook/audit.jsonl && ! grep -q "runs without asking (Run tasks without asking, version [0-9]*): $DM4" $T/im.log \
-  && pass "Run tasks without asking re-checks the sender live: an app removed after it sent a (autorun-signed) task is refused at the Mac, which asks and says why (audited)" || { cat $T/dm4.json; tail -20 $T/im.log; die "dev removed app"; }
-actp $DM4 cancel >/dev/null
+curl -s -X POST $O/v1/task_get -H "authorization: Bearer $(jq -r .token $PC2)" -H 'content-type: application/json' -d "{\"id\":\"$DM4\"}" | jq -e '.result.state=="cancelled" and .result.result.was=="queued"' >/dev/null && ! grep -q "runs without asking (Run tasks without asking, version [0-9]*): $DM4" $T/im.log \
+  && pass "Disconnect cancels an app's queued autorun-signed work before the runner resumes; the task never executes" || { cat $T/dm4.json; tail -20 $T/im.log; die "dev removed app"; }
 # swset autorun|experimental '<json>|null': a signed change of one switch, everything else carried as it is (policy-ui.ts sw)
 swset(){ pol; jq --arg w "$1" --argjson d "$2" '.result.spaces[0].envelope.policy as $c | {v:1,type:"relay-policy",space:"main",seq:(($c.seq // 0)+1),at:0,apps:($c.apps // {})} + (if $c.autorun then {autorun:$c.autorun} else {} end) + (if $c.experimental then {experimental:$c.experimental} else {} end) | del(.[$w]) + (if $d==null then {} else {($w):$d} end)' $T/pol.json > $T/pd.json; sp -d "$(jq -nc --arg w "$1" --argjson e "$(psig $T/pd.json)" --arg n "$(NN)" '{op:($w+"_set"),space:"main",envelope:$e,nonce:$n}')"; }
 [ "$(swset experimental '{"on":true}')" = 200 ] && pol && jq -e '.result.spaces[0]|(.experimental.on==true and .experimental.ci==true and .autorun.on==true and .log[0].switch=="experimental")' $T/pol.json >/dev/null || { cat $T/sp.out; die "experimental on"; }
@@ -4068,6 +4067,7 @@ sv $SA describe | jq -e '.result.sessions.allowed=="off" and .result.sessions.to
 [ "$(cat $T/ssp.code)" = 200 ] && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"read"}')" = 200 ] && jq -e '.result.summary=="shark can search and read your agent sessions on your computers"' $T/ssp.out >/dev/null \
   && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"everything"}')" = 400 ] && grep -q "sessions must be off | read | write" $T/ssp.out \
   && sv $SA describe | jq -e '.result.sessions.allowed=="read"' >/dev/null && smcp $SA '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name]|(index("sessions_search")!=null and index("session_get")!=null and index("session_status")!=null and index("session_create")==null)' >/dev/null \
+  && curl -s -o $T/ssettings.html -w '%{http_code}' -b $SJ $KITEBOOK_URL/settings | grep -q '^200$' \
  || { cat $T/ssp.out; die "sessions grant"; }
 sv $SA sessions_search '{"query":"webhook"}' > $T/s1.json; sv $SA sessions_search '{"agent":"claude"}' > $T/s2.json; sv $SA sessions_search '{"cwd":"'$SRP'","limit":50}' > $T/s3.json
 jq -e '.ok and .result.computer=="smac" and (.result.sessions|map(.id)|sort)==["pi-own-1","pi-own-2"] and (.result.sessions[0]|.agent=="pi" and .cwd=="'$SRP'" and (.live|not) and (.snippet|test("webhook")))' $T/s1.json >/dev/null \
@@ -4111,6 +4111,18 @@ sv $SA task_cancel "{\"id\":\"$SII\"}" >/dev/null; KITEBOOK_SPACE=sess KITEBOOK_
   && curl -s -X POST $KITEBOOK_URL/v1/sessions_search -H "authorization: Bearer $SA" -H content-type:application/json -d '{"space":"sess","query":"dark"}' | jq -e '.result.sessions[0].id=="cl-own-1"' >/dev/null \
   && curl -s $KITEBOOK_URL/openapi.json | jq -e '.paths["/v1/sessions_search"] and .paths["/v1/session_send"]' >/dev/null \
   && pass "live-sessions: the same ops on the CLI (kitebook sessions search / get) and the HTTPS API (/v1/sessions_search, in openapi.json)" || { cat $T/scli.json; die "sessions cli/api"; }
+# Scoped session consent is independent of task autorun. A signed saved rule can run copies; ask mode cannot be bypassed by task auto.
+ssp '{"op":"policy","space":"sess"}' >/dev/null
+SID=$(jq -r '.result.spaces[0].apps[]|select(.name=="shark")|.id' $T/ssp.out); SEP=$(jq -r '.result.spaces[0].apps[]|select(.name=="shark")|.session_epoch' $T/ssp.out)
+SRULE=$(jq -nc --arg peer "$SID" --arg epoch "$SEP" --arg key "$SAK" '{tasks:"auto",projects:["sr"],keys:[$key],sessions:"off",session_rule:{v:1,peer:$peer,epoch:$epoch,projects:["sr"],access:"fork",approval:"auto",keys:[$key]}}')
+[ "$(sset shark "$SRULE")" = 200 ] || die "scoped session rule"
+SCA=$(sv $SA session_send '{"agent":"pi","id":"pi-own-1","text":"SESS-SAVED","project":"sr"}' | jq -r .result.id)
+[ "$(swait $SCA)" = succeeded ] && grep -q SESS-SAVED $T/sess-prompts.log && grep -q session_consent_auto "$SH/.kitebook/audit.jsonl" || { tail -30 $T/sessrun.log; die "saved session consent"; }
+SRULE=$(jq '.session_rule.approval="ask"' <<< "$SRULE"); [ "$(sset shark "$SRULE")" = 200 ] || die "session ask rule"
+SCA=$(sv $SA session_send '{"agent":"pi","id":"pi-own-1","text":"SESS-EXPLICIT","project":"sr"}' | jq -r .result.id)
+[ "$(swait $SCA ask)" = awaiting_approval ] && ! grep -q SESS-EXPLICIT $T/sess-prompts.log || die "session ask bypass"
+ssp '{"op":"revoke","peer":"shark"}' >/dev/null
+sv $SRT task_get "{\"id\":\"$SCA\"}" | jq -e '.result.state=="cancelled"' >/dev/null && sv $SA sessions_search '{}' | jq -e '.ok==false' >/dev/null && [ "$(sha256sum "$SH/.pi/agent/sessions/--code-sr--/2026-10-20_pi-own-1.jsonl" | cut -c1-64)" = "$SRC1" ] || die "disconnect session work"
 kill $SRUN 2>/dev/null; wait $SRUN 2>/dev/null || true
 # ---- release-builds: the compiled kitebook binary installs and updates itself from GitHub Releases (a local fake), signed + numbered + rolled back ----
 # scripts/release-build.ts compiles client/kitebook-bin.ts (CLI + runner + updater) with a throwaway test release key baked in; scripts/fake-releases.ts

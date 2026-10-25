@@ -46,8 +46,15 @@ async function experimental(acct,space,x,undo){const st=await read(space),s=st.s
 const envelope=await signed(acct,space,st,cur,p=>{if(x)p.experimental={on:true,...(x.ci===false?{ci:false}:{}),...(x.gh_status?{gh_status:true}:{})};else delete p.experimental});
 const r=await sp({op:"experimental_set",space,envelope,undo_of:undo||null,nonce:await nonce()});if(!r.ok)throw new Error(r.error);return r.result}
 /* Agent sessions (live-sessions): off | read | write for one app, nothing else changes; needs presence like every widening change */
-async function sessions(acct,space,app,level){const s=(await read(space)).spaces[0],e=s.envelope&&s.envelope.policy.apps[app];
-return await set(acct,space,app,{...(e||{tasks:"ask",projects:[]}),sessions:level},null)}
+async function sessions(acct,space,app,options){const s=(await read(space)).spaces[0],e=s.envelope&&s.envelope.policy.apps[app],a=s.apps.find(x=>x.name===app);
+if(!a)throw new Error("This app disconnected; reload Settings");
+const {session_rule:old,...entry}=e||{tasks:"ask",projects:[]};
+if(options.access==="default")return await set(acct,space,app,{...entry,sessions:null},null);
+if(options.access==="off")return await set(acct,space,app,{...entry,sessions:"off"},null);
+if(!options.projects.length)throw new Error("Choose at least one project for session access");
+const keys=options.approval==="auto"&&options.access!=="read"?[await appKey(space,app)]:[];
+const rule={v:1,peer:a.id,epoch:a.session_epoch||"",projects:options.projects,access:options.access,approval:options.approval,keys};
+return await set(acct,space,app,{...entry,sessions:"off",session_rule:rule},null)}
 async function appKey(space,app){const r=await sp({op:"app_key",space,app,nonce:await nonce()});if(!r.ok)throw new Error(r.error);return r.result.pub}
 async function allow(acct,space,app,projects,until){const s=(await read(space)).spaces[0],e=s.envelope&&s.envelope.policy.apps[app],live=e&&e.tasks==="auto"&&(!e.until||e.until>Date.now());
 const keys=live&&e.keys&&e.keys.length?e.keys:[await appKey(space,app)];

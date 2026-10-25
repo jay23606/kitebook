@@ -80,6 +80,10 @@ with sync_playwright() as p:
         except Exception as e: errs.append(f"{kind} {v!r}: " + str(e).split("\n")[0][:200])
     for m in a.count:
         sel, n = m.rsplit("=", 1)
+        # Saves and disconnects complete asynchronously; count the settled UI, not the click's next frame.
+        try:
+            pg.wait_for_function("([sel,n])=>Array.from(document.querySelectorAll(sel)).filter(e=>e.checkVisibility?e.checkVisibility({visibilityProperty:true}):!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)).length===n", arg=[sel,int(n)], timeout=a.wait*1000)
+        except Exception: pass
         if vis(sel) != int(n): errs.append(f"{vis(sel)} visible {sel!r} after the clicks, {n} wanted")
     for _ in range(int(a.wait * 4) if a.steps else 1):
         body = pg.inner_text("body")

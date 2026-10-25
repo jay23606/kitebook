@@ -86,7 +86,7 @@ export function peerOps(this: Space): Record<string, Op> {
     policy: async (peer, a) => {
       this.need(peer, "read"); if (peer.kind !== "runner") throw new RelayError(403, "runners only: the owner reads and changes permissions on /start (Permissions)");
       // from: a task's sender, for autorun's live check (one of the owner's own apps, still connected; client/runner-approval.ts autorunSenderWhy)
-      return { envelope: this.metaJ("policy"), ...(a?.from ? { sender: await this.senderState(String(a.from)) } : {}), owner_keys: this.metaJ("owner_keys", []), cmds: (this.metaJ("owner_cmds", []) as any[]).filter(x => Date.now() - x.cmd.at < 86400_000),
+      return { envelope: this.metaJ("policy"), ...(a?.from ? { sender: await this.senderState(String(a.from)), session_identity: (() => { const m = this.sql.exec("select peer_id,revoked from members where name=?", String(a.from)).toArray()[0] as any; return { peer: m?.peer_id ?? "", epoch: m ? this.metaJ("session_epoch:" + m.peer_id, "") : "", connected: !!m && !m.revoked }; })() } : {}), owner_keys: this.metaJ("owner_keys", []), cmds: (this.metaJ("owner_cmds", []) as any[]).filter(x => Date.now() - x.cmd.at < 86400_000),
         // relay_update asks (the Mac decides; client/updater.ts); none while the owner has "Let apps update Kitebook" off, so an ask the Mac hasn't picked up yet stops too
         update_requests: this.appUpdatesOn() ? (this.metaJ("update_reqs", []) as any[]).filter(x => Date.now() - x.at < 86400_000) : [] };
     },

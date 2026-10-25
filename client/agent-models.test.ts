@@ -44,16 +44,16 @@ test("native commands time out rather than leaving a discovery process running",
 }, 15_000);
 
 test("unverified catalogs allow newer/default models while explicit catalogs and owner deny rules still restrict dispatch", async () => {
-  const C = await import("./runner-ctx.ts"), A = await import("./runner-agents.ts"), prior = C.cfg;
+  const C = await import("./runner-ctx.ts"), A = await import("./runner-agents.ts"), prior = C.cfg, priorMe = C.me;
   const agent = "catalog-fixture", catalog = await new ModelDiscovery(async()=>({ids:["old"]})).get({ ...spec, agent });
-  try { C.setCfg({ agents: { [agent]: { argv: ["test-agent","{prompt}"] } }, prefs: { defaultAgent: agent, defaultModel: "new" } });
+  try { C.setMe({name:"catalog-test"}); C.setCfg({ agents: { [agent]: { argv: ["test-agent","{prompt}"] } }, prefs: { defaultAgent: agent, defaultModel: "new" } });
     A.MODELS[agent] = ["old"]; A.MODEL_CATALOGS[agent] = catalog;
     expect(A.checkPick(agent,"new")).toBe(null); expect(A.resolvePick({}, { agent, auto: true })).toMatchObject({agent,model:"new"});
     C.setCfg({ ...C.cfg, prefs: { deny: [agent+"/new"] } }); expect(A.checkPick(agent,"new")).toMatch(/not allowed by the owner/);
     C.setCfg({ agents: { [agent]: { argv: ["test-agent","{prompt}"] } } });
     A.MODEL_CATALOGS[agent] = { ...catalog, authoritative: true }; expect(A.checkPick(agent,"new")).toMatch(/not available/);
     A.MODELS[agent] = []; expect(A.checkPick(agent,"new")).toMatch(/advertises no models/); expect(A.checkPick(agent,null)).toBe(null);
-  } finally { C.setCfg(prior); delete A.MODELS[agent]; delete A.MODEL_CATALOGS[agent]; }
+  } finally { C.setCfg(prior); C.setMe(priorMe); delete A.MODELS[agent]; delete A.MODEL_CATALOGS[agent]; }
 });
 
 

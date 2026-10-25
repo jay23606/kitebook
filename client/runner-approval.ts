@@ -246,7 +246,7 @@ export async function approve(t: any, proj: any, ask?: { text: string; gate: str
   const plain = async () => runPayload(await call("task_get", { id: t.id }), proj);
   const payload = ask?.payload ?? (chainRoot ? async () => payloadOf(last = await call("task_get", { id: t.id })) : plain);
   // what the caller gets back is always the plain run payload hash (it re-checks the task against it); the chain is recorded here
-  const fin = async (h: string | false): Promise<string | false> => { if (!h || !chainRoot) return h;
+  const fin = async (h: string | false): Promise<string | false> => { if (h && !ask && t.session && !(await (await import("./runner-sessions.ts")).markManual(t))) return false; if (!h || !chainRoot) return h;
     if (!last || h !== A.payloadHash(payloadOf(last))) return false; // can't happen (bound returns the hash of its last fetch); never record on doubt
     const root = { ...last, chain: last.chain_def }, dh = S.approveChain(root, nonces); log("chain approved:", t.id, `${root.chain.steps.length} steps, definition ${dh.slice(0, 8)}`); audit({ type: "chain_approved", task: t.id, def: dh.slice(0, 16) });
     return A.payloadHash(runPayload(last, proj)); };
@@ -254,21 +254,31 @@ export async function approve(t: any, proj: any, ask?: { text: string; gate: str
   // its push approval rides on it). Without it the old name-based rule applies (warned at startup). Everything else asks a human.
   const named = !cfg.trusted?.length || cfg.trusted.includes(t.from);
   let why = "", stand = "";
-  // continuing one of the owner's OWN agent sessions in place (session_send mode steer, client/runner-sessions.ts): always a human's yes,
-  // whatever approve=auto, a signature, a standing permission or autorun would say
+  // Session work follows its own signed scope and approval choice; general task autorun cannot widen it.
+  const session = t.session && (!ask || ask.gate === "steer") ? await (await import("./runner-sessions.ts")).taskConsent(t) : null;
+  if (session?.rule && session.automatic) {
+    const v = S.verifyTask(t, me.name, { [t.from]: session.keys }, nonces, Date.now(), S.POLICY_WINDOW);
+    if (v === "ok") {
+      signedKb.set(t.id, (t.signature ?? t.limits?._sig)?.kb ?? null); keepSignedKb(t,true);
+      policyRuns.set(t.id, { push: false }); audit({ type: "session_consent_auto", task: t.id, from: t.from, project: t.project });
+      return A.payloadHash(ask ? await ask.payload() : runPayload(t,proj));
+    }
+  }
+  const sessionAsk = !!session?.rule;
+  if (sessionAsk) { why = session?.why ?? "session work needs approval"; text += `\n\nSession permission: ${why}`; }
   const inPlace = !ask && t.session?.mode === "continue";
   if (inPlace) { why = "it continues one of your own agent sessions in place"; log("asking a human:", t.id, "-", why); }
   if (ask?.gate === "push" && policyRuns.has(t.id)) { const e = policyRuns.get(t.id), ar = autorunRuns.has(t.id);
     // autorun: the task's own branch only; the default branch or a force push asks (one tap) whatever the switch says (payload.ts autorunPushOk)
     if (e.push && (e.until == null || Number(e.until) > Date.now()) && (!ar || autorunPushOk(ask.branch, ask.defaultBranch, !!ask.force))) {
       log(ar ? "push allowed by Run tasks without asking (task branch):" : "push allowed by your permission:", t.id); audit({ type: ar ? "autorun_push" : "policy_push", task: t.id, branch: ask.branch ?? null }); return A.payloadHash(await ask.payload()); } }
-  if (cfg.approve === "auto" && !ask && !inPlace) { let v = S.verifyTask(t, me.name, cfg.trustedKeys, nonces);
+  if (cfg.approve === "auto" && !ask && !inPlace && !sessionAsk) { let v = S.verifyTask(t, me.name, cfg.trustedKeys, nonces);
     if (v === "ok") signedKb.set(t.id, (t.signature ?? t.limits?._sig)?.kb ?? null);
     if (v === "unsigned" && t.parent_id && t.chain_step) v = await chainTrust(t); // a chain child inherits its signed parent's trust
     if (v === "ok") { signedRuns.add(t.id); log("signature ok:", t.id, "signed by", t.from); keepSignedKb(t, true); } else if (cfg.requireSignedAuto === true || v !== "unsigned") { why = v; log("not auto-running", t.id, "-", v, "- asking a human"); audit({ type: "signature_fallback", task: t.id, from: t.from, why: v }); } }
   // The owner's standing permission (any approve mode: it never turns on approve=auto; checked after approve=auto's own signature check, so that keeps its timing): the owner-signed policy lets this sender
   // run in this project now, and the task carries a valid signature from a key that policy names for it. Push still asks unless ticked.
-  if (!ask && !inPlace && !signedRuns.has(t.id) && (!scratchOf(t, proj) || await autorunMaybe())) { const st = await standing(t);
+  if (!ask && !inPlace && !sessionAsk && !signedRuns.has(t.id) && (!scratchOf(t, proj) || await autorunMaybe())) { const st = await standing(t);
     // autorun covers the owner's OWN apps only, and only while they're still connected (the live check: removed, ended, a person or a Mac -> ask)
     const sw = "entry" in st && st.autorun ? autorunSenderWhy(t.from, st.sender) : null;
     if (sw) { stand = sw; log("not running on its own", t.id, "-", sw); audit({ type: "autorun_refused", task: t.id, from: t.from, why: sw }); }
@@ -283,7 +293,7 @@ export async function approve(t: any, proj: any, ask?: { text: string; gate: str
       stand = st.autorun ? `"Run tasks without asking" is on, but ${SIG_WHY[v] ?? v}` : `your permission for ${t.from} in ${t.project} is set, but ${SIG_WHY[v] ?? v}`; log("not running on its own", t.id, "-", stand); audit({ type: "policy_fallback", task: t.id, from: t.from, why: v, ...(st.autorun ? { autorun: true } : {}) });
     } else if ("why" in st && !st.quiet) stand = st.why; }
   // a steer, an agent asking mid-task to go past its sandbox (live drivers, gate "agent"), or an in-place continue of an owner session always asks a person, even with approve=auto
-  if (ask?.gate !== "steer" && ask?.gate !== "agent" && !inPlace && cfg.approve === "auto" && named && (ask ? signedRuns.has(t.id) || cfg.requireSignedAuto !== true : signedRuns.has(t.id) || (cfg.requireSignedAuto !== true && !why))) {
+  if (ask?.gate !== "steer" && ask?.gate !== "agent" && !inPlace && !sessionAsk && cfg.approve === "auto" && named && (ask ? signedRuns.has(t.id) || cfg.requireSignedAuto !== true : signedRuns.has(t.id) || (cfg.requireSignedAuto !== true && !why))) {
     if (cfg.ntfy?.topic && !ask) fetch((cfg.ntfy.server ?? "https://ntfy.sh").replace(/\/$/, ""), { method: "POST", headers: { "content-type": "application/json", ...(cfg.ntfy.token ? { authorization: `Bearer ${cfg.ntfy.token}` } : {}) },
       body: JSON.stringify({ topic: cfg.ntfy.topic, title: "Kitebook: running task", message: `Ran on its own: ${autoWhy(t)}\n\n${text}`.slice(0, 1500), priority: 2, tags: ["robot"] }) }).catch(() => {});
     return A.payloadHash(!ask && signedRuns.has(t.id) ? runPayload(t, proj) : ask ? await payload() : await plain()); // signed: exactly the task that was verified, never a re-fetch
