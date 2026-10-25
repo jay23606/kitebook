@@ -2,8 +2,9 @@
 // no token to copy and no key. The install itself was the owner's approval (the invite came from their signed-in Settings/Get started),
 // so this Mac's runner asks the server for one connection per agent (op agent_connect) with the safe default: its own folder kb/<name>,
 // read and edit, no task sending. The token goes straight into that agent's own config and is never printed:
-//   Pi, Codex     `<agent> mcp add kitebook --url <kitebook>/mcp --bearer-token-env-var KITEBOOK_<AGENT>_TOKEN`, the token in
+//   Pi            `<agent> mcp add kitebook --url <kitebook>/mcp --bearer-token-env-var KITEBOOK_<AGENT>_TOKEN`, the token in
 //                 ~/.kitebook/agent-tokens.env (0600), which your shell loads (one line added to ~/.zshrc / ~/.bashrc / fish conf.d)
+//   Codex         native HTTP header in ~/.codex/config.toml (0600); works for desktop and CLI without shell exports
 //   Claude Code   `claude mcp add --transport http kitebook <kitebook>/mcp --header "Authorization: Bearer ..." -s user` (its own ~/.claude.json)
 //   Cursor, Gemini CLI, opencode, GitHub Copilot CLI   their JSON config (~/.cursor/mcp.json, ~/.gemini/settings.json,
 //                 ~/.config/opencode/opencode.json, ~/.copilot/mcp-config.json or $COPILOT_HOME/mcp-config.json), merged: only the "kitebook"
@@ -19,8 +20,8 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync, appendFi
 import { join, dirname } from "path";
 import { homedir } from "os";
 
-export const AGENTS: Record<string, { label: string; bin: string; kind: "cli-env" | "claude" | "json" | "grok" }> = {
-  pi: { label: "Pi", bin: "pi", kind: "cli-env" }, codex: { label: "Codex", bin: "codex", kind: "cli-env" }, claude: { label: "Claude Code", bin: "claude", kind: "claude" },
+export const AGENTS: Record<string, { label: string; bin: string; kind: "cli-env" | "codex" | "claude" | "json" | "grok" }> = {
+  pi: { label: "Pi", bin: "pi", kind: "cli-env" }, codex: { label: "Codex", bin: "codex", kind: "codex" }, claude: { label: "Claude Code", bin: "claude", kind: "claude" },
   cursor: { label: "Cursor", bin: "cursor-agent", kind: "json" }, gemini: { label: "Gemini CLI", bin: "gemini", kind: "json" }, opencode: { label: "opencode", bin: "opencode", kind: "json" },
   copilot: { label: "GitHub Copilot CLI", bin: "copilot", kind: "json" }, grok: { label: "Grok CLI", bin: "grok", kind: "grok" },
 };
@@ -75,12 +76,36 @@ export const PI_MCP_HINT = "npm i -g @earendil-works/pi-coding-agent";
 export const piHasMcp = (help: string) => /^\s*pi mcp\b/m.test(help);
 // Checked before Kitebook is even asked for a connection (so nothing is minted or rotated for an agent that can't take it)
 function precheck(agent: string): string | null {
+  try {
+    if (AGENTS[agent].kind === "json") readConfig(JSON_CFG[agent]("", "").file, agent === "opencode" ? "mcp" : "mcpServers");
+    if (agent === "codex" && existsSync(codexFile())) try { Bun.TOML.parse(readFileSync(codexFile(), "utf8")); } catch { return "Codex config is not valid TOML; it was left alone"; }
+  } catch (e: any) { return e.message; }
   if (agent !== "pi") return null; let h = "";
   try { const p = PL.spawnSync([AGENTS.pi.bin, "--help"], { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 20000, env: process.env as any }); h = p.stdout.toString() + "\n" + p.stderr.toString(); } catch {}
   return piHasMcp(h) ? null : `this Pi is too old for MCP (needs 0.99 or newer, with \`pi mcp\`); update it: ${PI_MCP_HINT}`;
 }
+const object = (x: any) => x && typeof x === "object" && !Array.isArray(x);
+function readConfig(file: string, box: string): any {
+  let j: any = {};
+  if (existsSync(file)) try { j = JSON.parse(readFileSync(file, "utf8")); } catch { throw new Error(`${file.replace(H(), "~")} isn't plain JSON; it was left alone`); }
+  if (!object(j) || j[box] !== undefined && !object(j[box])) throw new Error(`${file.replace(H(), "~")} needs a JSON object for ${box}; it was left alone`);
+  return j;
+}
+const codexFile = () => join(process.env.CODEX_HOME || join(H(), ".codex"), "config.toml");
 function wire(agent: string, o: string, token: string): string | null {
   const a = AGENTS[agent];
+  if (a.kind === "codex") {
+    // Desktop launches do not inherit shell token exports. Persist Codex's native HTTP header in its private config instead.
+    run([a.bin,"mcp","remove","kitebook"]); run([a.bin,"mcp","remove","relay"]);
+    const r = run([a.bin,"mcp","add","kitebook","--url",`${o}/mcp`]); if (!r.ok) return r.err || "codex mcp add failed";
+    const f = codexFile(); let text = existsSync(f) ? readFileSync(f,"utf8") : "";
+    const j: any = Bun.TOML.parse(text);
+    if (!j.mcp_servers?.kitebook || j.mcp_servers.kitebook.url !== `${o}/mcp` || j.mcp_servers.kitebook.bearer_token_env_var || j.mcp_servers.kitebook.http_headers) return "Codex didn't save the expected MCP entry; check its config";
+    text += `\n[mcp_servers.kitebook.http_headers]\nAuthorization = ${JSON.stringify("Bearer " + token)}\n`;
+    writeFileSync(f,text,{mode:0o600}); chmodSync(f,0o600);
+    const saved: any = Bun.TOML.parse(readFileSync(f,"utf8"));
+    return saved.mcp_servers?.kitebook?.http_headers?.Authorization === `Bearer ${token}` ? null : "Codex MCP config wasn't saved";
+  }
   if (a.kind === "cli-env") { const v = `KITEBOOK_${agent.toUpperCase()}_TOKEN`; setEnv(v, token); run([a.bin, "mcp", "remove", "kitebook"]); run([a.bin, "mcp", "remove", "relay"]); // replace (and the pre-rename "relay" entry), never fail on a name clash
     const r = run([a.bin, "mcp", "add", "kitebook", "--url", `${o}/mcp`, "--bearer-token-env-var", v]); return r.ok ? null : r.err || `${a.bin} mcp add failed`; }
   if (a.kind === "grok") { run([a.bin, "mcp", "remove", "kitebook"]); run([a.bin, "mcp", "remove", "relay"]);
@@ -88,11 +113,11 @@ function wire(agent: string, o: string, token: string): string | null {
     return r.ok ? null : `this grok's \`mcp add\` didn't take a sign-in header (${r.err || "failed"}); add Kitebook to it by hand from Settings -> Connected apps`; }
   if (a.kind === "claude") { run([a.bin, "mcp", "remove", "kitebook", "-s", "user"]); run([a.bin, "mcp", "remove", "relay", "-s", "user"]);
     const r = run([a.bin, "mcp", "add", "--transport", "http", "kitebook", `${o}/mcp`, "--header", `Authorization: Bearer ${token}`, "-s", "user"]); return r.ok ? null : r.err || "claude mcp add failed"; }
-  const c = JSON_CFG[agent](o, token); let j: any = {};
-  if (existsSync(c.file)) { try { j = JSON.parse(readFileSync(c.file, "utf8") || "{}"); } catch { return `${c.file.replace(H(), "~")} isn't plain JSON, so it was left alone`; } }
-  if (!j || typeof j !== "object" || Array.isArray(j)) return `${c.file.replace(H(), "~")} isn't a JSON object, so it was left alone`;
-  for (const box of [j.mcpServers, j.mcp]) if (box && typeof box === "object") delete box.relay; // the pre-rename entry
-  c.set(j); mkdirSync(dirname(c.file), { recursive: true }); writeFileSync(c.file, JSON.stringify(j, null, 2) + "\n", { mode: 0o600 }); return null;
+  const c = JSON_CFG[agent](o, token), box = agent === "opencode" ? "mcp" : "mcpServers", j = readConfig(c.file, box);
+  if (j[box]) delete j[box].relay;
+  c.set(j); mkdirSync(dirname(c.file), { recursive: true }); writeFileSync(c.file, JSON.stringify(j, null, 2) + "\n", { mode: 0o600 }); chmodSync(c.file,0o600);
+  const saved = readConfig(c.file,box);
+  return JSON.stringify(saved[box]?.kitebook) === JSON.stringify(j[box].kitebook) ? null : "MCP config wasn't saved";
 }
 export async function connect(cfg: { url: string; token: string; space: string }, agents: string[]): Promise<{ ok: { agent: string; peer: string }[]; failed: { agent: string; why: string }[] }> {
   const ok: { agent: string; peer: string }[] = [], failed: { agent: string; why: string }[] = [];
@@ -106,7 +131,9 @@ export async function connect(cfg: { url: string; token: string; space: string }
     let r: any; try { r = await (await fetch(`${cfg.url}/v1/agent_connect`, { method: "POST", headers: { authorization: `Bearer ${cfg.token}`, "content-type": "application/json" }, body: JSON.stringify({ space: cfg.space, agent, ...(presence ? { presence } : {}) }) })).json(); }
     catch (e: any) { failed.push({ agent, why: `can't reach Kitebook (${e.message})` }); continue; }
     if (!r?.ok) { failed.push({ agent, why: r?.error ?? "Kitebook said no" }); continue; }
-    const err = wire(agent, cfg.url.replace(/\/+$/, ""), r.result.token); if (err) failed.push({ agent, why: err }); else { ok.push({ agent, peer: r.result.peer }); noteConnected(agent, r.result.peer); }
+    let err: string | null; try { err = wire(agent, cfg.url.replace(/\/+$/, ""), r.result.token); } catch (e: any) { err = e.message; }
+    if (err) err = err.split(r.result.token).join("[redacted]");
+    if (err) failed.push({ agent, why: err }); else { ok.push({ agent, peer: r.result.peer }); noteConnected(agent, r.result.peer); }
   }
   return { ok, failed };
 }
@@ -121,11 +148,13 @@ export async function connectCli(argv: string[]): Promise<number> {
   if (json) { console.log(JSON.stringify(r)); return r.ok.length || !r.failed.length ? 0 : 1; }
   if (argv.includes("--installer")) { // install.sh: one summary line
     const bad = r.failed.map(x => `${AGENTS[x.agent]?.label ?? x.agent}: ${x.why}`).join("; ");
-    console.log(r.ok.length ? `✓ Connected ${names(r.ok.map(x => x.agent))} to Kitebook: each uses only its own folder and can't send tasks (change it in Settings)${bad ? `. Not connected: ${bad}` : ""}` : `Coding agents not connected: ${bad}. Try again later with: kitebook connect`);
+    console.log(r.ok.length ? `✓ Configured ${names(r.ok.map(x => x.agent))} for Kitebook: each uses only its own folder and can't send tasks (change it in Settings)${bad ? `. Not connected: ${bad}` : ""}` : `Coding agents not connected: ${bad}. Try again later with: kitebook connect`);
+    if (r.ok.some(x => AGENTS[x.agent]?.kind === "cli-env")) console.log("  Open a new terminal before starting Pi so it loads its Kitebook sign-in.");
     return 0; }
   const settings = `${String(cfg.url).replace(/\/+$/, "")}/settings`;
-  if (r.ok.length) console.log(`✓ Connected ${names(r.ok.map(x => x.agent))} to Kitebook: each reads and edits only its own folder (${r.ok.map(x => "kb/" + x.peer).join(", ")}) and can't send tasks. Change that in Settings: ${settings}`);
+  if (r.ok.length) console.log(`✓ Configured ${names(r.ok.map(x => x.agent))} for Kitebook: each reads and edits only its own folder (${r.ok.map(x => "kb/" + x.peer).join(", ")}) and can't send tasks. Change that in Settings: ${settings}`);
   for (const x of r.failed) console.log(`  ${AGENTS[x.agent]?.label ?? x.agent} not connected: ${x.why}`);
-  if (r.ok.some(x => AGENTS[x.agent]?.kind === "cli-env")) console.log(`  Open a new terminal (or restart ${names(r.ok.filter(x => AGENTS[x.agent]?.kind === "cli-env").map(x => x.agent))}) so it picks up its Kitebook sign-in.`);
+  if (r.ok.length) console.log("  Restart the agent app or reload its MCP servers to use this connection; registration does not prove a live handshake.");
+  if (r.ok.some(x => AGENTS[x.agent]?.kind === "cli-env")) console.log(`  Open a new terminal before starting ${names(r.ok.filter(x => AGENTS[x.agent]?.kind === "cli-env").map(x => x.agent))} so it loads its Kitebook sign-in.`);
   return r.ok.length || !r.failed.length ? 0 : 1;
 }

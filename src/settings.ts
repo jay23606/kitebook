@@ -312,7 +312,7 @@ if(!ag){w.append(el("p","note",r.name+" hasn't said which coding agents it has y
 const inst=ag.filter(a=>a.installed),lab=id=>(ag.find(a=>a.id===id)||{label:id}).label;
 if(!inst.length)w.append(el("p","note","No coding agent found on "+r.name+". Install one (Pi, Codex, Claude Code, Cursor, Gemini CLI, opencode, GitHub Copilot CLI or Grok CLI) and it shows up here."));
 for(const a of inst){const row=el("div","row"),t=el("div"),h=el("div","ah");row.id="agent-"+r.name+"-"+a.id;h.append(el("b","",a.label));
-if(a.connected)h.append(el("span","tag ok","Connected to Kitebook"));if(a.issue)h.append(el("span","tag warn","Can't run tasks"));
+if(a.connected)h.append(el("span","tag ok","MCP configured"));if(a.issue)h.append(el("span","tag warn","Can't run tasks"));
 t.append(h,el("small","",a.issue||agentWords(a)));row.append(t);
 if(a.can_connect){const b=btn(a.connected?"Connect again":"Connect",a.connected?"sec":"",async()=>{if(!meTrusted())throw new Error("Your Mac doesn't trust this browser yet (see Passkeys and browsers).");await macCmd({do:"connect_agent",agent:a.id,runner:r.name},"@")});b.id="connect-"+r.name+"-"+a.id;row.append(b)}
 w.append(row)}
