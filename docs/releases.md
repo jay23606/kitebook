@@ -22,7 +22,7 @@ The compiled [`client/kitebook-bin.ts`](../client/kitebook-bin.ts) contains the 
 
 ## Updates
 
-Stable source releases use UTC calendar tags: `vYYYY.MM.DD-HHMMSS`, for example `v2026.10.25-043005`. Promotion publishes the tested `dev` commit to `main` and creates its timestamp tag atomically. Existing tags are retained. Binary builds use a current UTC tag when `--version` is omitted; explicit historical versions remain supported. Signed increasing numeric release counters, rather than tag string comparisons, continue to prevent downgrade/replay.
+Stable source releases use UTC date tags: `vYYYY.MM.DD`, for example `v2026.10.25`. Further releases on the same day use `.2`, `.3`, and so on. Promotion fetches existing tags, publishes the tested `dev` commit to `main` and creates its date tag atomically. Existing tags are retained. Binary builds use a current UTC date tag when `--version` is omitted; explicit historical versions remain supported. Signed increasing numeric release counters, rather than tag string comparisons, continue to prevent downgrade/replay.
 
 The CI `check` job runs typecheck, unit tests and the complete isolated runtime smoke on `dev` and pull requests. Promotion still requires that exact commit's CI result and a verified real-Mac run; calendar tagging does not bypass either gate.
 

@@ -9,7 +9,7 @@ set -euo pipefail
 MAC=0 DRY=0 SHA=""
 for a in "$@"; do case "$a" in --mac-ok) MAC=1 ;; --dry-run) DRY=1 ;; -h|--help) sed -n 2,7p "$0"; exit 0 ;; *) SHA="$a" ;; esac; done
 die() { echo "promote: $*" >&2; exit 1; }
-git fetch -q origin main dev || die "couldn't fetch origin main and dev"
+git fetch -q --tags origin main dev || die "couldn't fetch origin main, dev and tags"
 DEV=$(git rev-parse origin/dev) MAIN=$(git rev-parse origin/main)
 SHA=$(git rev-parse --verify -q "${SHA:-$DEV}^{commit}") || die "no such commit"
 git merge-base --is-ancestor "$SHA" "$DEV" || die "${SHA:0:7} isn't on dev"
@@ -26,8 +26,8 @@ echo "$RUNS" | jq -e 'all(.check_runs[]; .status == "completed" and (.conclusion
 [ $MAC = 1 ] || die "CI is green on ${SHA:0:7}. Run it on a real Mac (Settings -> Updates -> Update to dev now), then rerun with --mac-ok"
 TAG=$(bun scripts/release-tag.ts)
 [ $DRY = 1 ] && { echo "promote: would fast-forward main ${MAIN:0:7} -> ${SHA:0:7} and tag $TAG (UTC)"; exit 0; }
-git rev-parse --verify -q "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists; retry with a new timestamp"
+git rev-parse --verify -q "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists; fetch tags and retry"
 git tag -a "$TAG" "$SHA" -m "Kitebook $TAG (UTC)"
-# Atomic: either the checked main commit and its timestamp tag both publish, or neither does. Never force either ref.
+# Atomic: either the checked main commit and its date tag both publish, or neither does. Never force either ref.
 git push --atomic origin "$SHA:refs/heads/main" "refs/tags/$TAG"
 echo "promote: main ${MAIN:0:7} -> ${SHA:0:7}, tagged $TAG (UTC)"
