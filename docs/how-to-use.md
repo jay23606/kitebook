@@ -71,3 +71,7 @@ For example:
 > Use the project notes in Kitebook to ask my coding agent to investigate the import failure. Report its findings before requesting changes.
 
 See [agent tools and permissions](agents.md) and the [security model](security.md). You can manage an assistant's access under **Settings → Connected apps**.
+
+### Sign in from your phone
+
+Enter your **Kitebook master password** on the sign-in page once. Your Mac checks it in the background; keep the Mac awake and its runner connected. No macOS Keychain password is required. Passkeys are optional under **Other ways to sign in**. If remote password approval is disabled, use **Send a sign-in request**, then run `kitebook approve <code>` on your Mac. An expired request needs a fresh code.

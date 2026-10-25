@@ -21,6 +21,7 @@ import { acctHint, deviceCookies, sessionOwner, sessionCookies, setHint, clearCo
 import { authBase, PASSKEY_JS, mcpPath } from "./auth.ts";
 import { appPrompt } from "./named.ts";
 import { connectionPrompt, setupState } from "./onboarding.ts";
+import { passwordLogin } from "./browser-login.ts";
 import { RELEASE_KEY } from "../client/release-key.ts";
 import { OWNER_JS } from "./policy-ui.ts";
 import { LINK_RE } from "./login.ts";
@@ -121,8 +122,8 @@ export async function startFetch(req: Request, env: any, url: URL, h: H): Promis
   if (!sameOrigin(req, url)) return j({ ok: false, error: "cross-origin request refused" }, 403);
   const b: any = await req.json().catch(() => ({}));
   // a new owner session (Better Auth, 30 days, sliding; listed and removable in Settings, Devices & passkeys)
-  const begin = async (d: any, extra: any = {}, acct?: string) => { await d.ensureMain().catch(() => {}); const r = j({ ok: true, result: extra }); // first sign-in on a fresh Kitebook: workspace main exists from here on
-    for (const c of await d.baMint(url.origin, req.headers.get("user-agent") ?? "")) r.headers.append("set-cookie", c);
+  const begin = async (d: any, extra: any = {}, acct?: string, presenceDevice?: string) => { await d.ensureMain().catch(() => {}); const r = j({ ok: true, result: extra }); // first sign-in on a fresh Kitebook: workspace main exists from here on
+    for (const c of await d.baMint(url.origin, req.headers.get("user-agent") ?? "", presenceDevice)) r.headers.append("set-cookie", c);
     if (acct) r.headers.append("set-cookie", setHint(url, acct)); return r; };
   if (b.op === "signup") {
     const lim = await signupLimit(env, req); // same per-IP budget as POST /signup
@@ -216,7 +217,7 @@ export async function startFetch(req: Request, env: any, url: URL, h: H): Promis
     if (r !== "ok") return j({ ok: false, error: r === "used" ? "That sign-in link was already used. Run kitebook open on your Mac again." : r === "expired" ? "That sign-in link expired (they work for 5 minutes). Run kitebook open on your Mac again." : "That sign-in link isn't valid. Run kitebook open on your Mac again." }, 410);
     return await begin(d, { account: m[1] }, m[1]);
   }
-  if (b.op === "login_ask" || b.op === "login_poll") { // a sign-in request, approved with kitebook approve <code> on the Mac or in a browser already signed in
+  if (["login_ask", "login_poll", "login_password"].includes(b.op)) {
     try {
       if (b.op === "login_ask") {
         const lim = await ipLimit("login", knobs(env).connectIp); if (!lim.ok) return j({ ok: false, error: `Too many sign-in requests from your address. Try again in ${Math.ceil(lim.retry_after / 60)} min.` }, 429);
@@ -225,8 +226,15 @@ export async function startFetch(req: Request, env: any, url: URL, h: H): Promis
         return j({ ok: true, result: { poll: r.poll, code: r.code, expires: r.expires, runners: reach.runners } });
       }
       const m = String(b.poll ?? "").match(/^pc\.([a-z0-9][a-z0-9-]{0,30})\.[A-Za-z0-9_-]{20,64}$/); if (!m) return j({ ok: false, error: "That sign-in request isn't known. Send a new one." }, 400);
-      const d = h.dir(m[1]), r = await d.oauth("connectPoll", { poll: b.poll, client_id: "login", redirect_uri: "", challenge: "" });
-      return r.state === "approved" ? await begin(d, { state: "approved", account: m[1] }, m[1]) : j({ ok: true, result: { state: r.state, ...(r.error ? { error: r.error } : {}) } });
+      const d = h.dir(m[1]); let presenceDevice: string | undefined;
+      if (b.op === "login_password") {
+        const lim = await ipLimit("login-password", 20); if (!lim.ok) return j({ ok: false, error: "Too many password attempts. Try again later." }, 429);
+        let r: any; try { r = await passwordLogin(d, b.poll, typeof b.password === "string" ? b.password : ""); } finally { b.password = ""; }
+        if (!r.ok) return j({ ok: false, error: r.error }, r.status);
+        presenceDevice = r.device;
+      }
+      const r = await d.oauth("connectPoll", { poll: b.poll, client_id: "login", redirect_uri: "", challenge: "" });
+      return r.state === "approved" ? await begin(d, { state: "approved", account: m[1] }, m[1], presenceDevice) : j({ ok: true, result: { state: r.state, ...(r.error ? { error: r.error } : {}) } });
     } catch (e: any) { const msg = String(e?.message ?? e).replace(/^oauth:[a-z_]+:/, ""); return j({ ok: false, error: msg }, /Too many/.test(msg) ? 429 : 400); }
   }
   if (b.op === "devices" || b.op === "device_remove") { // browsers signed in (Better Auth sessions) + passkeys + waiting sign-ins; remove one browser
@@ -419,9 +427,9 @@ function startPage(s: { acct: string | null; hint: string | null; multi: boolean
 ${s.open ? card("Create your account", `${LEAD}<label>Account name</label><input type="text" id="acct" autocomplete="username" placeholder="e.g. alice"><div class="bar"><button id="signup">Sign up</button></div>`) : ""}
 ${s.fresh ? card("First time here? Sign in as the owner", `${s.open ? "" : LEAD}<p>This Kitebook is new: nobody has signed in yet. ${FIRST(s.origin)}</p><p class="note">After that you're signed in for 30 days, and connecting your Mac puts a <code>kitebook</code> command on it (<code>kitebook open</code> signs any browser in later).</p>`) : ""}
 ${card(s.open ? "Already have an account?" : s.fresh ? "Signed in before?" : "Sign in", `${s.open || s.fresh ? "" : LEAD}${s.multi ? `<label for="acct2">Your Kitebook account name</label><input type="text" id="acct2" autocomplete="username" value="${esc(s.hint ?? "")}">` : ""}
-<div class="bar"><button id="pkin">Sign in with a passkey</button></div><p class="note">No password needed. A passkey lives on your phone, laptop or password manager; add one in Settings once you're signed in.</p>
+<form id="loginform"><label for="loginpw">Kitebook master password</label><input type="password" id="loginpw" autocomplete="current-password" required><div class="bar"><button id="pwlogin" type="submit">Sign in</button></div></form><p class="note">Your Mac checks your password in the background. It needs to be awake with Kitebook running.</p>
 <div class="way"><b>On your Mac</b><p class="note">In Terminal, run <code>kitebook open</code>. It opens this page already signed in, and this browser stays signed in for 30 days.</p></div>
-<details id="other"${s.fresh ? " open" : ""}><summary>Other ways to sign in</summary><div class="ways"><details id="askd"><summary>Not at your Mac's browser? Approve this browser from your Mac</summary><div class="bar"><button id="askgo">Send a sign-in request</button></div>
+<details id="other"${s.fresh ? " open" : ""}><summary>Other ways to sign in</summary><div class="ways"><div class="bar"><button id="pkin">Use a passkey (optional)</button></div><p class="note">Use one you've already added in Settings.</p><details id="askd"><summary>Approve this browser from your Mac</summary><div class="bar"><button id="askgo">Send a sign-in request</button></div>
 <div id="askwait" hidden><p class="st">Waiting for your OK. Code <code id="askcode"></code></p><p class="note">On your Mac, in Terminal:</p><pre id="askcmd"></pre><p class="note">Or approve it in a browser that's already signed in (Get started or Settings).</p></div></details>
 <details id="rcbox"${s.fresh ? " open" : ""}><summary>Use a recovery code${s.multi ? "" : " (or this Kitebook's ADMIN_TOKEN)"}</summary><label for="key">${s.multi ? "Recovery code" : "Recovery code or ADMIN_TOKEN"}</label><input type="password" id="key" autocomplete="current-password"><div class="bar"><button id="signin">Sign in</button></div></details>${s.open ? "" : s.multi ? `<p class="note">New here? Signup on this Kitebook is by its operator. Ask them for an account.</p>` : s.fresh ? "" : `<details id="firstd"><summary>Run this Kitebook yourself and never signed in?</summary><p class="note">${FIRST(s.origin)}</p></details>`}</div></details>`)}
 <div id="keybox" hidden><p class="st">You're in. This browser stays signed in for 30 days.</p><details id="rcsave"><summary>Save a recovery code (optional)</summary><p class="note">It signs you in if you ever lose every browser and passkey. It can't be shown again; a password manager is a good place.</p>${code("adminkey")}</details>
@@ -476,12 +484,19 @@ const enc=t=>new TextEncoder().encode(t),b64u=b=>btoa(String.fromCharCode(...new
 post({op:"link_signin",token:lk[1]}).then(r=>{if(!r.ok)return msg(r.error);try{if(lk[2])sessionStorage.setItem("relay-trust",lk[2])}catch(e){}if(lk[3])location.assign("/settings");else done()})}}
 ${PASSKEY_JS}
 const acctName=()=>$("acct2")?$("acct2").value.trim():"";
+let pwRequest=null;
+if($("loginform"))$("loginform").onsubmit=async e=>{e.preventDefault();if(S.multi&&!acctName())return msg("Type your Kitebook account name first");
+const password=$("loginpw").value;$("loginpw").value="";$("pwlogin").disabled=true;msg("Checking with your Mac…");
+try{if(!pwRequest||pwRequest.account!==acctName()||pwRequest.expires<=Date.now()){const r=await post({op:"login_ask",account:acctName()});if(!r.ok)return msg(r.error);pwRequest={...r.result,account:acctName()}}
+const r=await post({op:"login_password",poll:pwRequest.poll,password});if(!r.ok)return msg(r.error);if(r.result.state==="approved")return done();msg("That request expired or was answered. Try again.");pwRequest=null;
+}catch(e){pwRequest=null;msg("Couldn't finish signing in. Check your connection and try again.")}finally{$("pwlogin").disabled=false}};
 if($("pkin"))$("pkin").onclick=async()=>{if(S.multi&&!acctName())return msg("Type your Kitebook account name first");try{await pkSignIn(S.multi?(acctName()===${JSON.stringify(ROOT_ACCOUNT)}?"/api/auth":"/u/"+acctName()+"/api/auth"):"/api/auth");done()}catch(e){msg(e.message)}};
-if($("askgo"))$("askgo").onclick=async()=>{if(S.multi&&!acctName())return msg("Type your Kitebook account name first");msg("Sending…");const r=await post({op:"login_ask",account:acctName()});if(!r.ok)return msg(r.error);msg("");
+if($("askgo"))$("askgo").onclick=async()=>{if(S.multi&&!acctName())return msg("Type your Kitebook account name first");$("askgo").disabled=true;try{msg("Sending…");const r=await post({op:"login_ask",account:acctName()});if(!r.ok)return msg(r.error);msg("");
 $("askcode").textContent=r.result.code;$("askcmd").textContent="kitebook approve "+r.result.code;$("askwait").hidden=false;$("askgo").disabled=true;
 if(r.result.runners===0&&!S.multi)msg("No Mac is connected to this Kitebook yet, so only a browser that's already signed in can approve this. First time? On the Mac running Kitebook, type kitebook open in Terminal.");
-for(;;){await new Promise(x=>setTimeout(x,2000));const p=await post({op:"login_poll",poll:r.result.poll});if(!p.ok){$("askgo").disabled=false;return msg(p.error)}
-if(p.result.state==="approved")return done();if(p.result.state!=="pending"){$("askgo").disabled=false;$("askwait").hidden=true;return msg(p.result.state==="denied"?"That sign-in was turned down.":p.result.state==="expired"?"That request expired. Send a new one.":"Not signed in: "+(p.result.error||p.result.state))}}};
+while(Date.now()<r.result.expires){await new Promise(x=>setTimeout(x,2000));const p=await post({op:"login_poll",poll:r.result.poll});if(!p.ok)return msg(p.error);
+if(p.result.state==="approved")return done();if(p.result.state!=="pending"){$("askwait").hidden=true;return msg(p.result.state==="denied"?"That sign-in was turned down.":p.result.state==="expired"?"That request expired. Send a new one.":"Not signed in: "+(p.result.error||p.result.state))}}msg("That request expired. Send a new one.");
+}catch(e){msg("Couldn't check that request. Check your connection and send a new one.")}finally{$("askgo").disabled=false}};
 if($("cont"))$("cont").onclick=()=>done(); /* the recovery code is optional: Continue never waits for it */
 if($("signin"))$("signin").onclick=async()=>{msg("Checking…");const r=await post({op:"signin",admin_key:$("key").value.trim()});if(!r.ok)return msg(r.error);done()};
 if($("key"))$("key").onkeydown=e=>{if(e.key==="Enter")$("signin").click()};

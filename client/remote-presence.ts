@@ -1,9 +1,9 @@
 // The master password typed on another device (a phone), relayed here by the server (src/remote-pw.ts; docs/security.md): checked with this
 // Mac's own password key (unlock: Argon2id + its waits), signs exactly that one approval, forgotten. Only pairing codes and presence
-// confirmations; 5 wrong per code / 5 in 15 min lock it for 15 min (audited); runner.json "remotePassword": false turns it off here.
+// confirmations and browser sign-ins; 5 wrong per code / 5 in 15 min lock it for 15 min (audited); runner.json "remotePassword": false turns it off here.
 import "./brand.ts";
 
-export const REMOTE_ACTION = /^(device_grant:[A-Z]{4}-[A-Z]{4}|confirm:[A-Z]{6})$/;
+export const REMOTE_ACTION = /^(device_grant:[A-Z]{4}-[A-Z]{4}|confirm:[A-Z]{6}|connect:cr_[0-9a-f]{16})$/;
 export const MAX_WRONG = 5, LOCK_MS = 15 * 60_000;
 export class RemoteLimiter {
   byCode = new Map<string, number>(); recent: number[] = []; until = 0;
@@ -28,7 +28,7 @@ export async function remoteAnswer(q: any, o: { enabled: boolean; hasPassword: b
   audit: (e: any) => void }): Promise<RemoteAnswer> {
   const action = String(q?.action ?? ""), pw = typeof q?.password === "string" ? q.password : "";
   if (!o.enabled) return { ok: false, error: "this Mac doesn't take the master password from other devices (runner.json \"remotePassword\": false)" };
-  if (!REMOTE_ACTION.test(action)) { o.audit({ type: "remote_password_refused", action: action.slice(0, 60), why: "not an approval this takes" }); return { ok: false, error: "refused: only a pairing code or a presence confirmation can be approved with the password from another device" }; }
+  if (!REMOTE_ACTION.test(action)) { o.audit({ type: "remote_password_refused", action: action.slice(0, 60), why: "not an approval this takes" }); return { ok: false, error: "refused: only pairing, browser sign-in or presence confirmation can be approved with the password from another device" }; }
   if (!o.hasPassword) return { ok: false, error: "this Mac has no master password yet (kitebook password set)" };
   if (!pw || pw.length > 1024) return { ok: false, error: "type your Kitebook master password", wrong: true };
   const lim = o.limiter.check(action); if (lim) return { ok: false, error: lim, locked: true };

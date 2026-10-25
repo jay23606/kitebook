@@ -12,7 +12,7 @@
 //   kitebook open on the Mac (a single-use 5-minute /start#login= link from the runner), a passkey, or a sign-in request approved with
 //   kitebook approve <code> on the Mac (or from a browser already signed in). The recovery code only bootstraps a hosted account.
 import { ROOT_ACCOUNT, ACCT_SRC, acctPath, isRoot } from "../client/account.ts";
-import { deviceFns } from "./devices.ts";
+import { deviceFns, PRESENCE_WINDOW } from "./devices.ts";
 import { deviceCookies } from "./session.ts";
 import type { Kysely } from "kysely";
 import { decodeJwt } from "jose";
@@ -135,9 +135,18 @@ export function ba(d: D, origin: string): Promise<BA> {
 
 // ---------- Dir side ----------
 // a new owner session: the Set-Cookie headers for it (never leaves this Dir except as those headers)
-export async function mintSession(d: D, origin: string, ua?: string): Promise<string[]> {
+export async function mintSession(d: D, origin: string, ua?: string, presenceDevice?: string): Promise<string[]> {
   const b = await ba(d, origin), r = await b.auth.handler(new Request(origin + authBase(d.acct) + "/relay/mint", { method: "POST", headers: { "x-relay-mint": b.mint, origin, "content-type": "application/json", ...(ua ? { "user-agent": ua } : {}) }, body: "{}" }));
   if (!r.ok) throw new Error("couldn't start a session: " + r.status);
+  // Password sign-in already confirmed the human. Carry the same short presence
+  // window into this new session so OAuth consent doesn't ask for the password again.
+  // This argument is internal; no public sign-in body can supply a device id.
+  if (presenceDevice) {
+    const v = d.sql.exec("select tenant from devices where id=? and state='active' and revoked=0 and password_key is not null", presenceDevice).toArray()[0] as any;
+    if (!v) throw new Error("the device that confirmed sign-in is no longer active");
+    const s = await r.json() as { session: string };
+    d.sql.exec("insert or replace into presence_ok values(?,?,?,?)", s.session, v.tenant, presenceDevice, Date.now() + PRESENCE_WINDOW);
+  }
   return r.headers.getSetCookie();
 }
 export async function sessionOf(d: D, origin: string, cookie: string): Promise<{ id: string; user: string } | null> {

@@ -2036,7 +2036,7 @@ KPI=$(curl -s -X POST $EAS/oauth2/register -H 'content-type: application/json' -
 AUK="$EAS/oauth2/authorize?response_type=code&client_id=$KPI&redirect_uri=$KCBE&code_challenge=$CH&code_challenge_method=S256&state=kc&resource=$O/u/erin/mcp"
 for i in $(seq 1 30); do curl -sL -b $SJ "${NAV[@]}" "$AUK" | grep -q 'your Mac</b> (imac)' && break; sleep 0.5; done # the runner re-advertises after the config change
 curl -sL "${NAV[@]}" "$AUK" > $T/kc0.html; curl -sL -b $SJ "${NAV[@]}" "$AUK" > $T/kc1.html
-grep -q "run <code>kitebook open</code>" $T/kc0.html && grep -q 'id="pkin">Sign in with a passkey' $T/kc0.html && grep -q 'id="askgo">Send a sign-in request' $T/kc0.html && grep -q '<details id="rcbox"><summary>Use a recovery code</summary>' $T/kc0.html && ! grep -qi "account key" $T/kc0.html \
+grep -q "run <code>kitebook open</code>" $T/kc0.html && grep -q 'id="loginform"' $T/kc0.html && grep -q 'id="pkin"' $T/kc0.html && grep -q 'id="askgo">Send a sign-in request' $T/kc0.html && grep -q '<details id="rcbox"><summary>Use a recovery code</summary>' $T/kc0.html && ! grep -qi "account key" $T/kc0.html \
   && grep -q '"oauth":"/u/erin/api/auth/oauth2/authorize?' $T/kc0.html && grep -q 'wants to connect to <b>your Mac</b> (imac)' $T/kc1.html && grep -q '<button id="ok">Approve</button>' $T/kc1.html && [ "$(grep -o 'class="preset"' $T/kc1.html | wc -l)" = 3 ] && ! grep -q 'id="term"\|id="phone"' $T/kc1.html \
   && python3 scripts/plain-words.py $T/kc0.html $T/kc1.html > $T/kc.pw && ! perl -0pe 's#<script.*?</script>##gs; s#<style.*?</style>##gs' $T/kc0.html $T/kc1.html | grep -Eqi "client id|\bDCR\b|policy|scope" \
   && pass "an app connecting: signed out -> the account's own sign-in page (kitebook open, passkey, approve from your Mac; recovery code hidden), back to the app right after; signed in -> one Approve naming the Mac, 3 choices; plain words" || { cat $T/kc.pw; die "consent page layout"; }
@@ -3921,6 +3921,13 @@ msp '{"op":"presence_ask","action":"mint:assistant"}' >/dev/null; RPA=$(jq -r .r
 [ "$RPR" = true ] && [ "$(msp "{\"op\":\"presence_password\",\"id\":\"$RPA\",\"password\":\"$MPW5\"}")" = 200 ] && jq -e '.result.confirmed=="mint:assistant"' $T/msp.out >/dev/null \
   && [ "$(msp "{\"op\":\"presence_password\",\"id\":\"$RPA\",\"password\":\"$MPW5\"}")" = 404 ] \
   && pass "phone-approve: a presence prompt offers the password field (remote) and the Mac's answer confirms that code once" || { cat $T/msp.out; die "remote presence prompt"; }
+# Sign in from a fresh phone browser using one password, then refuse replay of that browser's poll secret.
+RPSJ=$T/rp-signin.jar; : > $RPSJ
+rps(){ curl -s -o $T/rps.out -w %{http_code} -b $RPSJ -c $RPSJ -X POST $KITEBOOK_URL/start -H content-type:application/json -d "$1"; }
+[ "$(rps '{"op":"login_ask","account":"mpw"}')" = 200 ] && RPSP=$(jq -r .result.poll $T/rps.out) \
+  && [ "$(rps "{\"op\":\"login_password\",\"poll\":\"$RPSP\",\"password\":\"$MPW5\"}")" = 200 ] && jq -e '.result.state=="approved"' $T/rps.out >/dev/null \
+  && [ "$(rps '{"op":"status"}')" = 200 ] && [ "$(rps '{"op":"mint","client":"assistant"}')" = 200 ] && [ "$(rps "{\"op\":\"login_poll\",\"poll\":\"$RPSP\"}")" = 400 ] \
+  && ! grep -qF "$MPW5" $T/mprun1.log || { cat $T/rps.out; die "phone password sign-in"; }
 # phone-approve part 2: a phone's passkey as an approval device (src/passkey.ts; scripts/passkey-sim.ts is a software WebAuthn authenticator)
 PKS=$T/pk1.json; PKS2=$T/pk2.json; curl -s "$KITEBOOK_URL/device?add=passkey&account=mpw" > $T/pkpage.html
 PKC=$(bun scripts/passkey-sim.ts enroll $KITEBOOK_URL $PKS mpw 2>$T/pk.err); PKPRE=$(curl -s -X POST $KITEBOOK_URL/device -H content-type:application/json -d '{"op":"passkey_challenge","account":"mpw","action":"device_grant:BCDF-GHJK"}' | jq -r .challenge)

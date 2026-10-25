@@ -97,6 +97,9 @@ test("fallback: a broken Touch ID helper (fake-broken) or a declined one still c
   expect(await F.assert(d, (await DV.presenceAssert(s, "act:2"))!, "act:2", "mac5")).toMatchObject({ ok: true, by: "shortcut" });
   // a wrong password: nothing signed
   process.env.KITEBOOK_FAKE_PRESENCE = "no"; process.env.KITEBOOK_TEST_PASSWORD = "wrong one\nwrong two\nwrong three"; expect(await DV.presenceAssert(s, "act:3")).toBeNull();
+  // The legacy OS-password Keychain backend must not run before the Kitebook password.
+  process.env.KITEBOOK_PRESENCE = "keychain-acl"; process.env.KITEBOOK_TEST_PASSWORD = "baseline password";
+  expect(await F.assert(d, (await DV.presenceAssert(s, "act:4"))!, "act:4", "mac5")).toMatchObject({ ok: true, by: "password" });
 });
 
 test("change, reset, shortcut: change needs the old key's signature; a reset (server shell / another device) opens 15 minutes without it; the shortcut needs the password, off is free", async () => {

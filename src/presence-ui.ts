@@ -22,9 +22,9 @@ const q=await sp({op:"presence_passkey",id:a.result.id,passkey:await kbPk.get(ch
 c.prepend(pb,pm)}
 /* not at a computer (a phone): type the master password here; it goes over HTTPS to your Mac, which checks it and forgets it (src/remote-pw.ts) */
 if(a.result.remote){const f=document.createElement("form"),lb=document.createElement("label"),pw=document.createElement("input"),go=document.createElement("button"),m=document.createElement("p");
-lb.textContent="Or type your Kitebook master password here (checked by your Mac):";lb.htmlFor="presence-pw";pw.type="password";pw.id="presence-pw";pw.autocomplete="current-password";pw.style.cssText="display:block;width:100%;margin:.4rem 0;font:inherit;padding:.4rem";go.type="submit";go.textContent="Confirm";m.setAttribute("role","status");
-f.onsubmit=async e=>{e.preventDefault();if(!pw.value)return;go.disabled=true;m.textContent="Checking with your Mac…";const q=await sp({op:"presence_password",id:a.result.id,password:pw.value});pw.value="";go.disabled=false;if(q.ok){done=true;m.textContent="Confirmed."}else m.textContent=q.error||"Not confirmed"};
-f.append(lb,pw,go,m);c.append(f)}
+lb.textContent="Kitebook master password (checked by your Mac):";lb.htmlFor="presence-pw";pw.type="password";pw.id="presence-pw";pw.autocomplete="current-password";pw.style.cssText="display:block;width:100%;margin:.4rem 0;font:inherit;padding:.4rem";go.type="submit";go.textContent="Confirm";m.setAttribute("role","status");
+f.onsubmit=async e=>{e.preventDefault();if(!pw.value)return;const password=pw.value;pw.value="";go.disabled=true;m.textContent="Checking with your Mac…";try{const q=await sp({op:"presence_password",id:a.result.id,password});if(q.ok){done=true;m.textContent="Confirmed."}else m.textContent=q.error||"Not confirmed"}catch(e){m.textContent="Couldn't confirm. Check your connection and try again."}finally{go.disabled=false}};
+f.append(lb,pw,go,m);c.prepend(f)}
 c.append(x);o.append(c);document.body.append(o);let stop=false;x.onclick=()=>{stop=true};
 try{for(let i=0;i<200&&!stop;i++){await new Promise(z=>setTimeout(z,done?50:1500));const s=await sp({op:"presence_state",id:a.result.id});if(s.ok&&s.result.state==="confirmed")return await f();if(!s.ok||s.result.state!=="open")break}}finally{o.remove()}
 return r};`;

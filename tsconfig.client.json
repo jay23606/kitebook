@@ -16,5 +16,5 @@
 	},
 	"include": ["client/*.ts", "scripts/*.ts"],
 	// tests of server code (they import src/space/*, which needs the Workers types) are checked by tsconfig.test.json
-	"exclude": ["client/presence.test.ts", "client/mcp-discovery.test.ts", "client/cost-guards.test.ts", "client/devlog.test.ts", "client/device.test.ts", "client/join.test.ts", "client/frictions.test.ts", "client/ingress.test.ts", "client/password.test.ts", "client/connect-any-app.test.ts", "client/remote-presence.test.ts", "client/passkey.test.ts", "client/account-store.test.ts", "client/workspace.test.ts"]
+	"exclude": ["client/browser-login.test.ts", "client/presence.test.ts", "client/mcp-discovery.test.ts", "client/cost-guards.test.ts", "client/devlog.test.ts", "client/device.test.ts", "client/join.test.ts", "client/frictions.test.ts", "client/ingress.test.ts", "client/password.test.ts", "client/connect-any-app.test.ts", "client/remote-presence.test.ts", "client/passkey.test.ts", "client/account-store.test.ts", "client/workspace.test.ts"]
 }

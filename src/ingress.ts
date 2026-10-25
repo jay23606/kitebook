@@ -67,7 +67,7 @@ const EDGE_ROUTES: [RegExp, string][] = [
 ];
 // The one dashboard page the edge serves without a session: the sign-in step of an OAuth connection (Better Auth sends a signed-out browser
 // to /start with its signed authorization request) and the sign-in calls that page makes. Signed in, the owner's session opens the rest.
-export const EDGE_SIGNIN_OPS = ["link_signin", "login_ask", "login_poll", "signin"];
+export const EDGE_SIGNIN_OPS = ["link_signin", "login_ask", "login_poll", "login_password", "signin"];
 const START = new RegExp(`^${U}/start$`);
 // The approval page POST /connect and the device grant hand out (verification_uri). Its GET is a page; its POST (view / approve / deny)
 // still checks its own credential in src/oauth.ts devicePage: the owner device's master-password (presence) assertion bound to that one

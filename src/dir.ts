@@ -146,7 +146,7 @@ create table if not exists acct(k text primary key, v text);`);
   }
   // ---- owner sign-in + app sign-in on Better Auth (src/auth.ts): /api/auth/*, /consent and the OAuth metadata come here (fetch) ----
   async fetch(req: Request) { return await authFetch(this as any, req); }
-  async baMint(origin: string, ua?: string) { return await mintSession(this as any, origin, ua); } // Set-Cookie headers of a new owner session
+  async baMint(origin: string, ua?: string, presenceDevice?: string) { return await mintSession(this as any, origin, ua, presenceDevice); } // internal: presenceDevice only after a verified password sign-in
   async baSession(origin: string, cookie: string) { return await sessionOf(this as any, origin, cookie); }
   async baSessionEnd(origin: string, a: { id?: string; cookie?: string }) { return await sessionEnd(this as any, origin, a); }
   async baDevices(origin: string, mine: string) { return await devices(this as any, origin, mine); }
