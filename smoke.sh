@@ -368,15 +368,15 @@ h task_get $ID2 | jq -e ".note|test(\"allowlisted\")" >/dev/null && pass "reject
 
 # MCP polish: tool titles/annotations/outputSchemas, resources (tasks, files), prompts that build a ready task_create
 mc(){ curl -s $KITEBOOK_URL/mcp -H "authorization: Bearer $1" -H content-type:application/json -d "$2"; }
-# tools/list by caller: assistants get 38 including restart recovery (no runner-only tools); the runner gets all; a task addressed to you adds the target tools
+# tools/list checks capabilities and privilege boundaries, not a count that breaks whenever a tool is added.
 RONLY='["policy","settings_report","code_report","task_live","task_approval","approval_page","approval_wait","task_release","task_steer_take","task_claim","task_progress","task_complete","presence_report","health_report","has"]'
 mc $HARK '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-a.json; mc $MAC '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-r.json
 TGT=$(bun client/admin.ts peer tgt assistant 2>/dev/null); bun client/admin.ts grant tgt main read "shared/**" >/dev/null; mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t0.json
 TGTID=$(h task_create --target tgt --title "for tgt" --instructions "x" | jq -r .id); mc $TGT '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > $T/tl-t1.json; h task_cancel --id $TGTID >/dev/null 2>&1 || true
-jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) <= 40 and ($n|length) >= 25 and (["sync","sync_read","sync_ack","sync_status","sync_publish"] - $n | length)==0 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
+jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | (["sync","sync_read","sync_ack","sync_status","sync_publish","sessions_search","session_get","session_status","session_create","session_send"] - $n | length)==0 and ([$ro[]|select(. as $x|$n|index($x))]|length==0)
   and (["agent_models","mcp_status","describe","presence","task_create","ask","ask_get","task_steer","task_answer","inbox","ack","task_get","kb_search","relay_update","status"]|all(. as $x|$n|index($x)))
   and ($n|index("check")|not) and ($n|index("changes")|not) and ($n|index("cancel_all")|not)' $T/tl-a.json >/dev/null \
-  && jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ($n|length) > 50 and ([$ro[]|select(. != "has")|select(. as $x|$n|index($x)|not)]|length==0)' $T/tl-r.json >/dev/null \
+  && jq -e --argjson ro "$RONLY" '[.result.tools[].name] as $n | ([$ro[]|select(. != "has")|select(. as $x|$n|index($x)|not)]|length==0)' $T/tl-r.json >/dev/null \
   && jq -e '[.result.tools[].name] | (index("task_complete")|not) and (index("task_claim")|not)' $T/tl-t0.json >/dev/null && jq -e '[.result.tools[].name] | index("task_claim") and index("task_progress") and index("task_complete")' $T/tl-t1.json >/dev/null \
   && jq -e '.result.tools[]|select(.name=="policy" or .name=="dev_mode")|.annotations.readOnlyHint' $T/tl-r.json >/dev/null \
   && mc $HARK '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"changes","arguments":{"since":0}}}' | jq -e '.result.isError|not' >/dev/null \
