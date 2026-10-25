@@ -3926,7 +3926,7 @@ RPSJ=$T/rp-signin.jar; : > $RPSJ
 rps(){ curl -s -o $T/rps.out -w %{http_code} -b $RPSJ -c $RPSJ -X POST $KITEBOOK_URL/start -H content-type:application/json -d "$1"; }
 [ "$(rps '{"op":"login_ask","account":"mpw"}')" = 200 ] && RPSP=$(jq -r .result.poll $T/rps.out) \
   && [ "$(rps "{\"op\":\"login_password\",\"poll\":\"$RPSP\",\"password\":\"$MPW5\"}")" = 200 ] && jq -e '.result.state=="approved"' $T/rps.out >/dev/null \
-  && [ "$(rps '{"op":"status"}')" = 200 ] && [ "$(rps '{"op":"mint","client":"assistant"}')" = 200 ] && [ "$(rps "{\"op\":\"login_poll\",\"poll\":\"$RPSP\"}")" = 400 ] \
+  && [ "$(rps '{"op":"status"}')" = 200 ] && [ "$(rps '{"op":"mint","client":"hark"}')" = 200 ] && [ "$(rps "{\"op\":\"login_poll\",\"poll\":\"$RPSP\"}")" = 400 ] \
   && ! grep -qF "$MPW5" $T/mprun1.log || { cat $T/rps.out; die "phone password sign-in"; }
 # phone-approve part 2: a phone's passkey as an approval device (src/passkey.ts; scripts/passkey-sim.ts is a software WebAuthn authenticator)
 PKS=$T/pk1.json; PKS2=$T/pk2.json; curl -s "$KITEBOOK_URL/device?add=passkey&account=mpw" > $T/pkpage.html
