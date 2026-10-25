@@ -2,12 +2,13 @@
 // Single-threaded, so every commit lands in order; if_match gives optimistic concurrency on top.
 // The class is split by area into a chain of layers in src/space/ (core -> gc -> events -> files -> tasks), and the op table into
 // fileOps/peerOps/taskOps/kbOps; this file keeps what the Worker and the Dir object call: setup, admin RPC, the alarm, run, sockets.
+import { RESOURCE, failureDecision } from "../client/resource-guard.ts";
 import { normAcct, dirName } from "../client/account.ts";
 import { missing, RelayError, type Peer, type Res } from "./ops.ts";
 import { EventsError, CODES } from "./events.ts";
 import { blobStore, b64encode, b64decode, INLINE_MAX, EXTERNAL_AT } from "./blobs.ts";
 import * as KB from "./kb.ts";
-import { HELD, RELAY, OWNER, STUCK_STATES, now } from "./space/util.ts";
+import { HELD, RELAY, OWNER, STUCK_STATES, now, redact } from "./space/util.ts";
 import { SpaceTasks, taskOps } from "./space/tasks.ts";
 import { ownerWorkspace } from "./workspace-ui.ts";
 import { SYNC_SCHEMA, syncOps } from "./space/sync.ts";
@@ -83,11 +84,11 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
     this.store = blobStore(env);
     // Blob GC markers (blobs.ts): external blobs stored before markers existed get theirs the first time the space wakes, so another
     // space's GC never deletes an object this one still uses. Runs in the background; retried on the next wake until it completes.
-    if (this.store && this.sql.exec("select 1 from meta where k='blob_refs'").toArray().length === 0) ctx.waitUntil(this.backfillRefs().catch(e => console.error("blob refs backfill", e)));
+    if (!this.resourcesPaused() && this.store && this.sql.exec("select 1 from meta where k='blob_refs'").toArray().length === 0) ctx.waitUntil(this.backfillRefs().catch(e => console.error("blob refs backfill", e)));
     // Safety net: pending webhook deliveries always have an alarm behind them, even if one was lost (restart, older code).
-    ctx.blockConcurrencyWhile(async () => { if (this.sql.exec("select 1 from outbox limit 1").toArray().length && (await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(Date.now()); });
+    ctx.blockConcurrencyWhile(async () => { if (!this.resourcesPaused() && this.sql.exec("select 1 from outbox limit 1").toArray().length && (await ctx.storage.getAlarm()) === null) await this.armAlarm(Math.max(Date.now() + 1000, Number(this.sql.exec("select min(next_at) t from outbox").one().t) || 0)); });
     // Retention runs from the same alarm (daily), so a space that only ever finished tasks still gets pruned.
-    ctx.blockConcurrencyWhile(async () => { if (this.retentionDays() > 0 && this.sql.exec("select 1 from tasks limit 1").toArray().length && (await ctx.storage.getAlarm()) === null) await ctx.storage.setAlarm(this.retentionNext()); });
+    ctx.blockConcurrencyWhile(async () => { if (!this.resourcesPaused() && this.retentionDays() > 0 && this.sql.exec("select 1 from tasks limit 1").toArray().length && (await ctx.storage.getAlarm()) === null) await this.armAlarm(this.retentionNext()); });
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
   // ---------- admin (called by the Dir object only) ----------
@@ -311,13 +312,25 @@ create table if not exists blob_put(sha text primary key, at integer, size integ
   }
 
   async alarm() {
+    if (this.resourcesPaused()) return;
+    const gate = failureDecision(this.resourceState("alarm"), RESOURCE.alarm);
+    if (gate.waitMs > 0) { await this.armAlarm(Date.now() + gate.waitMs); return; }
+    try {
+      await this.alarmWork(); this.sql.exec("delete from meta where k='resource:alarm:'");
+    } catch (error) {
+      const state = this.resourceFailure("alarm", "", redact(error instanceof Error ? error.message : String(error)));
+      console.error("background alarm failed; resource circuit", state.failures, state.paused ? "paused" : "backoff");
+      if (state.paused) await this.ctx.storage.deleteAlarm(); else await this.armAlarm(state.nextAt);
+    }
+  }
+  async alarmWork() {
     const subNext = this.evSweep();
     const outNext = await this.outboxRun();
     if (this.retentionDays() > 0 && Date.now() >= this.retentionNext()) {
       try { await this.prune(); } catch (e) { console.error("retention", e); }
       this.sql.exec("insert or replace into meta values('retention_next',?)", String(Date.now() + 86_400_000));
     }
-    if (this.gcDue() <= Date.now()) try { await this.gc(); } catch (e) { console.error("blob gc", e); }
+    if (this.gcDue() <= Date.now()) await this.gc(); // unexpected errors must consume the alarm circuit, not silently rearm forever
     const ids = this.sql.exec(`select id from tasks where state in (${HELD.map(() => "?").join(",")})`, ...HELD).toArray().map(r => r.id as string);
     let next = Math.min(subNext ?? Infinity, outNext ?? Infinity);
     for (const id of ids) {

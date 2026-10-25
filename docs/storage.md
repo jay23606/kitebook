@@ -50,3 +50,27 @@ Cloud objects wake for requests, messages and scheduled alarms, then can hiberna
 Task retries are capped (default one, explicit maximum five). Webhook failures, including unexpected delivery exceptions, consume a finite retry budget (default eight; termination notices three), with exponential backoff and a batch ceiling. Failed external blob cleanup preserves a retry marker at least a minute in the future. Alarm deadlines are finite and overdue work has a one-second floor; no alarm should continually rearm for poisoned rows at the current instant. These controls reduce runaway paths; they do not prove every possible loop absent.
 
 For paid cloud deployments, review request/duration/storage usage and configure the account's available usage notifications. Notifications are not a hard cutoff. A genuinely bounded total bill needs a verified provider-enforced budget/limit or an operational shutdown policy; Kitebook does not claim to provide one. This change does not modify the owner's plan, deployment or billing settings.
+
+## Failure-driven resource guard
+
+[`client/resource-guard.ts`](../client/resource-guard.ts) defines the shared failure budgets, request deadlines and stream bounds. The runner API transport, outbound webhooks, S3 operations and SSE lifecycle use it. Durable counters live in each workspace's existing SQLite metadata, not a separate service.
+
+- Approval delivery stops after five failures or one hour. Its separate budget does not reset when the runner restarts. The task shows `approval_retry_paused` and explains that no owner declined it. Fix the approval channel, then use the existing **Retry** action to start a fresh, approval-required task with the original context.
+- Unexpected alarm failures back off, then pause after five failures or one hour. A new object instance keeps the circuit state. Webhook deliveries and storage cleanup retain their finite retry budgets. Legacy blob-reference backfill stops after eight failures, shares concurrent calls, and keeps its budget across cold starts.
+- An SSE response has at most 256 KiB of queued writes. Graceful shutdown has a one-second deadline; a stalled response is then aborted. Its connection slot remains occupied until completion or abort. Large initial replays finish in pages with an advancing cursor; a single event too large for push returns `use_poll_for_large_event`, which clients should recover through `events/poll`.
+- Runner API requests have a 30-second deadline, S3 operations 15 seconds, and webhooks five seconds. Deadlines include response-body consumption. S3's hidden SDK retries are disabled; the workflow owns the retry budget.
+
+Inspect or pause work using the admin CLI (authenticate privately as usual):
+
+```sh
+bun client/admin.ts resources main status
+bun client/admin.ts resources main pause
+bun client/admin.ts resources main resume
+# All current and future workspaces of this account:
+bun client/admin.ts resources - pause
+bun client/admin.ts resources - resume
+```
+
+Pause and resume actions are recorded in the account audit log; inspecting status does not add an audit entry. Account and workspace pauses are independent. Resume clears that scope's pause and the alarm/storage/backfill failure circuits; paused approval tasks still need an explicit Retry. Status reports failure counters, pending webhook count and deployment pause state. For an emergency Cloudflare deployment pause, deploy with `KITEBOOK_RESOURCE_GUARD_PAUSED=1`; remove that setting to permit work again. An admin resume cannot override a deployment pause.
+
+The resource pause stops server-owned background work and new task claims. Use the existing task kill switch to cancel coding agents already running. These controls bound the guarded failure-driven workflows started by Kitebook. They are not a spending cap: incoming HTTP requests, intentional connection recovery and normal authenticated activity can still generate usage. They do not cancel external effects already completed.

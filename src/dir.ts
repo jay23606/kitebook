@@ -191,20 +191,30 @@ create table if not exists acct(k text primary key, v text);`);
   // every admin command, from the server shell (/admin), Settings / start (session) or the Dir itself: counted, and audited unless it
   // only reads (src/account-store.ts AUDIT_SKIP). The actor is what the caller says made it (a.by: an app, "Settings"), else "admin".
   async admin(cmd: string, a: any): Promise<any> {
-    const by = typeof a?.by === "string" && a.by ? a.by : "admin", audit = !AUDIT_SKIP.has(cmd);
+    const by = typeof a?.by === "string" && a.by ? a.by : "admin", audit = !AUDIT_SKIP.has(cmd) && !(cmd === "resources" && (a?.action ?? "status") === "status");
+    const auditAction = cmd === "resources" ? `resources.${a?.action ?? "status"}` : cmd;
     accountFns.meter(this, "admin");
-    try { const r = await this.adminRun(cmd, a ?? {}); if (audit) accountFns.audit(this, by, cmd, auditTarget(a)); return r; }
-    catch (e) { if (audit) accountFns.audit(this, by, cmd, auditTarget(a), false); throw e; }
+    try { const r = await this.adminRun(cmd, a ?? {}); if (audit) accountFns.audit(this, by, auditAction, auditTarget(a)); return r; }
+    catch (e) { if (audit) accountFns.audit(this, by, auditAction, auditTarget(a), false); throw e; }
   }
   async adminRun(cmd: string, a: any): Promise<any> {
     switch (cmd) {
+      case "resources": {
+        const action = a.action ?? "status"; if (!["status", "pause", "resume"].includes(action)) throw new Error("resources: status | pause | resume");
+        const ids = this.sql.exec("select id from spaces" + (a.space ? " where id=?" : ""), ...(a.space ? [a.space] : [])).toArray().map((r: any) => r.id);
+        if (a.space && !ids.length) throw new Error("no such space");
+        if (!a.space && action !== "status") { if (action === "pause") this.sql.exec("insert or replace into acct values('resources_paused','1')"); else this.sql.exec("delete from acct where k='resources_paused'"); }
+        const spaces = []; for (const id of ids) spaces.push({ space: id, ...await this.space(id).resourceControl(action, !a.space) });
+        return { account: this.acct, spaces };
+      }
       case "space": {
         if (!/^[a-z0-9-]{1,40}$/.test(a.id ?? "")) throw new Error("space id: lowercase letters, digits, dashes");
         const lim = this.limits(), have = this.sql.exec("select count(*) n from spaces").one().n as number;
         if (lim.spaces && have >= lim.spaces && !this.sql.exec("select 1 from spaces where id=?", a.id).toArray().length)
           throw this.quotaErr("space", have, lim.spaces, "Reuse a space you have (see /start -> Status)");
         this.sql.exec("insert or ignore into spaces values(?,?,?)", a.id, a.name ?? a.id, now());
-        await this.space(a.id).init(a.id, a.name ?? a.id, this.acct, lim.storage_mb); await this.space(a.id).setOwnerKeys(this.ownerKeys()); return { space: a.id };
+        await this.space(a.id).init(a.id, a.name ?? a.id, this.acct, lim.storage_mb); await this.space(a.id).setOwnerKeys(this.ownerKeys());
+        if (this.sql.exec("select 1 from acct where k='resources_paused'").toArray().length) await this.space(a.id).resourceControl("pause", true); return { space: a.id };
       }
       case "peer": {
         if (!KINDS.includes(a.kind)) throw new Error("kind: " + KINDS.join("|"));
@@ -469,7 +479,7 @@ create table if not exists acct(k text primary key, v text);`);
       case "audit": return { account: this.acct, entries: accountFns.auditList(this, a) }; // the account's audit trail, newest first (before: a seq to page back)
       case "users": return await this.users(); // the people in this account (today: its owner)
       case "rotate_admin": if (isRoot(this.acct)) throw new Error("root's key is the ADMIN_TOKEN secret"); return await this.rotateAdmin();
-      default: throw new Error("admin: space | peer | invite | grant | revoke | rotate | list | status | presence | export | import | retention | ratelimit | prune | gc | gc_store | pause | resume | stuck | title | grants | revoke_grant | owner_key | policy | app_key | policy_set | login_link | app_expiry | app_add | agent_peer | owner_cmd | expiries | usage | quota | rotate_admin | dev_key | dev_set | tunnel_report | connection | tunnel_ask | devices | device_approve | device_rename | device_revoke | device_password_reset | ingress | audit | users");
+      default: throw new Error("admin: resources | space | peer | invite | grant | revoke | rotate | list | status | presence | export | import | retention | ratelimit | prune | gc | gc_store | pause | resume | stuck | title | grants | revoke_grant | owner_key | policy | app_key | policy_set | login_link | app_expiry | app_add | agent_peer | owner_cmd | expiries | usage | quota | rotate_admin | dev_key | dev_set | tunnel_report | connection | tunnel_ask | devices | device_approve | device_rename | device_revoke | device_password_reset | ingress | audit | users");
     }
   }
 }

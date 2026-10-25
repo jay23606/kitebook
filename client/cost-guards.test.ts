@@ -1,5 +1,5 @@
 // Real retry/GC/alarm methods, synthetic SQLite + failing adapters. No Cloudflare account or network.
-import { test, expect, mock } from "bun:test";
+import { test, expect, mock, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 mock.module("cloudflare:workers", () => ({ DurableObject: class {} }));
 const { SpaceEvents } = await import("../src/space/events.ts"), { SpaceGc } = await import("../src/space/gc.ts"), { SpaceCore } = await import("../src/space/core.ts");
@@ -65,5 +65,78 @@ test("duplicate runner-failure deliveries cannot consume retries twice, and the 
     expect(()=>sp.failOrRetry(first,{id:"runner"},{summary:"duplicate",reason:"runner_crash"},{},["running"])).toThrow("task is queued");expect(sp.loadTask().attempt).toBe(2);expect(events).toBe(2);
     db.run("update tasks set state='running'");sp.failOrRetry(sp.loadTask(),{}, {summary:"again",reason:"runner_crash"},{},["running"]);expect(sp.loadTask().attempt).toBe(3);
     db.run("update tasks set state='running'");sp.failOrRetry(sp.loadTask(),{}, {summary:"last",reason:"runner_crash"},{},["running"]);expect(sp.loadTask().state).toBe("failed");expect(events).toBe(4);
+  }finally{db.close();}
+});
+
+test("SSE slots remain occupied during graceful close and stalled readers are actually aborted",async()=>{
+  const {sp,db}=fixture(SpaceEvents.prototype);sp.evStreams=new Map();sp.evStreamSeq=0;sp.evType=()=>({inputSchema:{properties:{}}});sp.evAuthorize=()=>({});sp.evStart=()=>({from:0,truncated:false});sp.evHead=()=>0;
+  sp.evNum=(key:string,d:number)=>key==="EVENTS_STREAM_MAX_MS"?10:key==="EVENTS_MAX_STREAMS"?1:d;
+  const first=sp.evStream({id:"reader"},1,{}),reader=first.body!.getReader(),closed=reader.closed.catch(()=>{});
+  await Bun.sleep(30);expect(sp.evStreams.size).toBe(1);expect(sp.evStream({id:"reader"},2,{}).headers.get("content-type")).not.toBe("text/event-stream");
+  await closed;expect(sp.evStreams.size).toBe(0);await expect(reader.read()).rejects.toThrow("deadline");db.close();
+});
+
+test("approval failures stop durably after five releases and do not revive on a new runner",async()=>{
+  const {SpaceTasks,taskOps}=await import("../src/space/tasks.ts"),{db,sp}=fixture(SpaceTasks.prototype);
+  db.run("create table tasks(id text primary key,state text,attempt integer,max_retries integer,result text,updated text,held_since text,held_acc integer default 0);insert into tasks(id,state,attempt,max_retries) values('approval','queued',1,1)");
+  sp.sql.exec=(q:string,...a:any[])=>{const rows=db.query(q).all(...a);return{toArray:()=>rows,one:()=>rows[0],rowsWritten:(db.query('select changes() n').get() as any).n};};
+  sp.loadTask=()=>({...db.query("select * from tasks where id='approval'").get() as any,needs_approval:true,limits:{},target:"runner"});sp.taskFor=()=>sp.loadTask();sp.emit=()=>{};sp.projectContext=async()=>null;
+  const runner:any={id:"runner",name:"runner",kind:"runner"};
+  for(let n=1;n<=5;n++) {const ops=taskOps.call(sp);await ops.task_claim(runner,{id:"approval"});const r=await ops.task_release(runner,{id:"approval",reason:"approval_unreachable"});expect(r.paused).toBe(n===5);
+    if(n<5){await expect(ops.task_claim(runner,{id:"approval"})).rejects.toThrow("cooldown");const state=sp.resourceState("approval","approval");state.nextAt=0;db.query("update meta set v=? where k=?").run(JSON.stringify(state),"resource:approval:approval");}}
+  expect(sp.loadTask().state).toBe("failed");expect(JSON.parse(sp.loadTask().result).approval_paused).toBe(true);expect(sp.loadTask().attempt).toBe(1);
+  const restarted=Object.assign(Object.create(SpaceTasks.prototype),sp);expect(restarted.resourceState("approval","approval").failures).toBe(5);
+  await expect(taskOps.call(restarted).task_claim(runner,{id:"approval"})).rejects.toThrow("task is failed");db.close();
+});
+
+test("alarm exceptions pause across object reconstruction; workspace and account pauses remain independent",async()=>{
+  const {Space}=await import("../src/space.ts"),{db,sp,alarms}=fixture(Space.prototype);let calls=0;
+  sp.ctx.storage.deleteAlarm=async()=>{};sp.alarmWork=async()=>{calls++;throw Error("unavailable");};
+  for(let n=1;n<=5;n++){await sp.alarm();expect(calls).toBe(n);const state=sp.resourceState("alarm");if(n<5){expect(state.nextAt).toBeGreaterThan(Date.now());state.nextAt=0;db.query("update meta set v=? where k='resource:alarm:'").run(JSON.stringify(state));}}
+  const restarted=Object.assign(Object.create(Space.prototype),sp);for(let n=0;n<10;n++)await restarted.alarm();expect(calls).toBe(5);expect(restarted.resourcesPaused()).toBe(true);
+  await restarted.resourceControl("resume");expect(restarted.resourcesPaused()).toBe(false);await restarted.resourceControl("pause",true);await restarted.resourceControl("pause");
+  await restarted.resourceControl("resume",true);expect(restarted.resourcesPaused()).toBe(true);const count=alarms.length;await restarted.armAlarm(Date.now());expect(alarms.length).toBe(count);
+  await restarted.resourceControl("resume");expect(restarted.resourcesPaused()).toBe(false);db.close();
+});
+
+
+test("S3 failures make one attempt; the workflow owns the retry budget",async()=>{
+  const {blobStore}=await import("../src/blobs.ts");let calls=0;
+  const preconnect=globalThis.fetch.preconnect;
+  const fetch=spyOn(globalThis,"fetch").mockImplementation(Object.assign(async()=>{calls++;return new Response("unavailable",{status:503});},{preconnect}));
+  try {const store=blobStore({BLOB_STORE:"s3",S3_ENDPOINT:"https://storage.example.test",S3_BUCKET:"fixture",S3_ACCESS_KEY_ID:"fixture",S3_SECRET_ACCESS_KEY:"fixture"});
+    await expect(store!.get("a".repeat(64))).rejects.toThrow("HTTP 503");expect(calls).toBe(1);
+  }finally{fetch.mockRestore();}
+});
+
+test("large SSE replay pages advance instead of repeatedly overflowing the same buffer",async()=>{
+  const {sp,db}=fixture(SpaceEvents.prototype);sp.evStreams=new Map();sp.evStreamSeq=0;sp.evType=()=>({inputSchema:{properties:{}}});sp.evAuthorize=()=>({});sp.evHead=()=>60;
+  sp.evNum=(key:string,d:number)=>key==="EVENTS_STREAM_MAX_MS"?10:d;
+  const exec=sp.sql.exec;sp.sql.exec=(q:string,...a:any[])=>q.startsWith("select * from events where")?Array.from({length:60},(_,i)=>({seq:i+1,type:"file.changed",data:"{}"})).filter(r=>r.seq>a[0]):exec(q,...a);
+  sp.evOcc=(_p:any,_t:any,_a:any,ev:any)=>({eventId:String(ev.seq),data:{text:"x".repeat(8192)}});
+  let cursor=0,pages=0;const ids:string[]=[];
+  try {while(cursor<60&&pages++<5){sp.evStart=()=>({from:cursor,truncated:false});const response=sp.evStream({id:"reader"},pages,{}),text=await response.text();
+      const frames=text.trim().split("\n\n").map((x:string)=>JSON.parse(x.slice(6)));for(const f of frames)if(f.method==="notifications/events/event")ids.push(f.params.eventId);
+      const last=frames.at(-1);expect(last.result).toBeDefined();const {decCursor}=await import("../src/events.ts");const next=decCursor("?",last.result.cursor);expect(next).not.toBeNull();expect(next!).toBeGreaterThan(cursor);cursor=next!;}
+    expect(cursor).toBe(60);expect(ids).toHaveLength(60);expect(new Set(ids).size).toBe(60);expect(pages).toBeGreaterThan(1);
+  }finally{for(const s of sp.evStreams.values())sp.evStreamClose(s,false);db.close();}
+});
+
+
+test("blob reference backfill cannot retry forever on cold starts or multiply concurrent calls",async()=>{
+  const {db,sp}=fixture(SpaceGc.prototype);let calls=0;
+  db.run("insert into blobs values('old',1,'s3')");sp.store={ref:async()=>{calls++;await Bun.sleep(1);throw Error("storage unavailable");}};
+  try {for(let n=1;n<=8;n++){const first=sp.backfillRefs();expect(sp.backfillRefs()).toBe(first);await expect(first).rejects.toThrow("storage unavailable");
+      expect(calls).toBe(n);await expect(sp.backfillRefs()).rejects.toThrow("paused or cooling down");expect(calls).toBe(n);
+      const state=sp.resourceState("refs");state.nextAt=0;db.query("update meta set v=? where k='resource:refs:'").run(JSON.stringify(state));}
+    const restarted=Object.assign(Object.create(SpaceGc.prototype),sp);await expect(restarted.backfillRefs()).rejects.toThrow("paused");expect(calls).toBe(8);
+  }finally{db.close();}
+});
+
+test("unexpected GC errors reach the alarm circuit instead of silently rearming forever",async()=>{
+  const {Space}=await import("../src/space.ts"),{db,sp}=fixture(Space.prototype);let calls=0;
+  sp.ctx.storage.deleteAlarm=async()=>{};sp.evSweep=()=>null;sp.outboxRun=async()=>null;sp.retentionDays=()=>0;sp.gcDue=()=>0;sp.gc=async()=>{calls++;throw Error("unexpected GC bug");};
+  try {for(let n=1;n<=5;n++){await sp.alarm();expect(calls).toBe(n);const state=sp.resourceState("alarm");state.nextAt=0;db.query("update meta set v=? where k='resource:alarm:'").run(JSON.stringify(state));}
+    for(let n=0;n<10;n++)await sp.alarm();expect(calls).toBe(5);expect(sp.resourcesPaused()).toBe(true);
   }finally{db.close();}
 });

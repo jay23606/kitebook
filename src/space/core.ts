@@ -1,5 +1,6 @@
 // Space DO, base layer: rate limits, approval asks, capability checks, the versioned file store (tree/blobs), presence, the alarm.
 // One layer of the Space class chain (core -> gc -> events -> files -> tasks -> Space in src/space.ts); split for size only, no behavior lives in the chain itself.
+import { RESOURCE, failedResource, failureDecision, type FailureState } from "../../client/resource-guard.ts";
 import { isRoot } from "../../client/account.ts";
 import { DurableObject } from "cloudflare:workers";
 import { globMatch, RelayError, type Peer } from "../ops.ts";
@@ -17,6 +18,37 @@ export class SpaceCore extends DurableObject<Env> {
   }
   // env knob: unset or "" (a declared-but-empty binding) = the default, so an empty deploy var never silently turns a limit off
   knob(k: string, def: number): number { const v = (this.env as any)[k]; const n = v === undefined || v === null || v === "" ? def : Number(v); return Number.isFinite(n) && n >= 0 ? n : def; }
+
+  // Durable failure budgets live with their work, so cold starts cannot reset a circuit.
+  resourceState(kind: "approval" | "alarm" | "refs", id = ""): FailureState | null {
+    const raw = this.sql.exec("select v from meta where k=?", `resource:${kind}:${id}`).toArray()[0]?.v;
+    if (raw == null) return null;
+    try { return JSON.parse(String(raw)); } catch { return { failures: 999, firstAt: 0, nextAt: 0, paused: true, reason: "invalid resource state; owner resume required" }; }
+  }
+  resourceFailure(kind: "approval" | "alarm" | "refs", id: string, reason: string) {
+    const state = failedResource(this.resourceState(kind, id), RESOURCE[kind], reason);
+    this.sql.exec("insert or replace into meta values(?,?)", `resource:${kind}:${id}`, JSON.stringify(state)); return state;
+  }
+  resourcesPaused() {
+    return (this.env as any).RESOURCE_GUARD_PAUSED === "1" || this.sql.exec("select 1 from meta where k in ('resources_paused','resources_account_paused')").toArray().length > 0
+      || failureDecision(this.resourceState("alarm"), RESOURCE.alarm).paused;
+  }
+  requireResources() { if (this.resourcesPaused()) throw new RelayError(423, "background work is paused by its resource guard; the owner can inspect and resume resources"); }
+  async resourceControl(action = "status", account = false) {
+    if (!["status", "pause", "resume"].includes(action)) throw new Error("resources action: status | pause | resume");
+    const pauseKey = account ? "resources_account_paused" : "resources_paused";
+    if (action === "pause") {
+      this.sql.exec("insert or replace into meta values(?,'1')", pauseKey); await this.ctx.storage.deleteAlarm();
+      for (const s of [...((this as any).evStreams?.values() ?? [])]) (this as any).evStreamClose(s, false);
+    }
+    if (action === "resume") {
+      this.sql.exec("delete from meta where k in (?,'resource:alarm:','gc_failures','gc_retry_at','resource:refs:')", pauseKey); await this.armAlarm(Date.now() + 1000);
+    }
+    const failures = this.sql.exec("select k,v from meta where k like 'resource:%' order by k limit 100").toArray().map((r: any) => ({ operation: r.k, ...this.resourceState(r.k.split(":")[1] as "approval" | "alarm" | "refs", r.k.split(":").slice(2).join(":")) }));
+    return { paused: this.resourcesPaused(), deployment_paused: (this.env as any).RESOURCE_GUARD_PAUSED === "1",
+      gc_failures: Number(this.sql.exec("select v from meta where k='gc_failures'").toArray()[0]?.v ?? 0),
+      queued_webhooks: this.sql.exec("select count(*) n from outbox").one().n, failures };
+  }
 
   // ---------- per-token rate limit: requests per minute per token (a peer token, or one OAuth grant) in this space ----------
   // Default 600/min (RATE_PER_MIN env; per space or per peer via admin `ratelimit <space> <per_min> [peer]`; 0 = off). Fixed one-minute
@@ -163,8 +195,8 @@ export class SpaceCore extends DurableObject<Env> {
 
   // One alarm, multiplexed: next fire = the soonest of lease expiry, subscription expiry and the next due outbox delivery.
   async armAlarm(at: number) {
-    if (!Number.isFinite(at)) return;
-    at = Math.max(at, Date.now() + 1000); // overdue/poisoned work can never spin an immediate alarm loop
+    if (!Number.isFinite(at) || this.resourcesPaused()) return;
+    at = Math.max(at, this.resourceState("alarm")?.nextAt ?? 0, Date.now() + 1000); // overdue/poisoned work can never spin an immediate alarm loop
     const cur = await this.ctx.storage.getAlarm();
     if (cur === null || cur > at) await this.ctx.storage.setAlarm(at);
   }

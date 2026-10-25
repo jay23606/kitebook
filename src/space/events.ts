@@ -4,6 +4,7 @@ import { type Peer } from "../ops.ts";
 import { EventsError, CODES, SUB_META, evErr, typeOf, validateArgs, payloadFor, encCursor, decCursor, checkCallbackUrl, resolvesPublic, secretBytes, signV1, subId, category, type EvType, type Raw } from "../events.ts";
 import { type Member, type EvStream, ctEqual, now, rid } from "./util.ts";
 import { SpaceGc } from "./gc.ts";
+import { RESOURCE, failedResource, resourceIO, resourceStream, resourceBytes } from "../../client/resource-guard.ts";
 
 export class SpaceEvents extends SpaceGc {
   // ---------- events ----------
@@ -52,9 +53,9 @@ export class SpaceEvents extends SpaceGc {
     const sig = [...new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${body}`)))].map(b => b.toString(16).padStart(2, "0")).join("");
     let wu: URL; try { wu = new URL(m.webhook!); } catch { return { ok: false, error: "bad_url", final: true }; }
     if (!(await resolvesPublic(wu, this.evPolicy))) return { ok: false, error: "connection_refused", final: true }; // SSRF guard: never POST to private/loopback addresses
-    try { const r = await fetch(wu.href, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000), headers: { "content-type": "application/json", "x-relay-signature": `t=${t},v1=${sig}`, "x-relay-event": type }, body });
+    try { return await resourceIO(async signal => { const r = await fetch(wu.href, { method: "POST", redirect: "manual", signal, headers: { "content-type": "application/json", "x-relay-signature": `t=${t},v1=${sig}`, "x-relay-event": type }, body });
       await r.body?.cancel(); if (r.ok) return { ok: true };
-      return { ok: false, error: category(r.status), final: r.status >= 400 && r.status < 500 && r.status !== 429 }; } catch (e) { return { ok: false, error: category(null, e) }; }
+      return { ok: false, error: category(r.status), final: r.status >= 400 && r.status < 500 && r.status !== 429 }; }, RESOURCE.webhookMs); } catch (e) { return { ok: false, error: category(null, e) }; }
   }
 
   // ---------- durable webhook outbox ----------
@@ -66,6 +67,7 @@ export class SpaceEvents extends SpaceGc {
     this.armAlarm(Date.now()).catch(() => {});
   }
   async outboxRun(): Promise<number | null> {
+    if (this.resourcesPaused()) return null;
     const rows = this.sql.exec("select * from outbox where next_at<=? order by id limit 32", Date.now()).toArray() as any[];
     const byTarget = new Map<string, any[]>(); for (const r of rows) { const k = r.kind + ":" + r.target; byTarget.set(k, [...(byTarget.get(k) ?? []), r]); }
     // In order per receiver, receivers in parallel.
@@ -73,6 +75,7 @@ export class SpaceEvents extends SpaceGc {
     return (this.sql.exec("select min(next_at) t from outbox").one().t as number | null) ?? null;
   }
   async outboxSend(r: any) {
+    if (this.resourcesPaused()) return; // a pause can land while another delivery was awaiting its response
     const drop = () => { this.sql.exec("delete from outbox where id=?", r.id); };
     let res: { ok: boolean; error?: string; final?: boolean };
     if (r.kind === "peer") {
@@ -92,8 +95,11 @@ export class SpaceEvents extends SpaceGc {
   // Unexpected adapter/JSON failures consume the same finite budget as HTTP failures, including across eviction.
   outboxResult(r: any, res: { ok: boolean; error?: string; final?: boolean }) {
     const drop = () => { this.sql.exec("delete from outbox where id=?", r.id); };
-    const tries = (Number(r.attempts) || 0) + 1, max = r.kind === "term" ? 3 : Math.min(32, this.evNum("OUTBOX_MAX_ATTEMPTS", 8));
-    if (res.ok || res.final || tries >= max) {
+    const max = r.kind === "term" ? 3 : Math.min(32, this.evNum("OUTBOX_MAX_ATTEMPTS", RESOURCE.webhook.maxFailures));
+    const retry = failedResource({ failures: Number(r.attempts) || 0, firstAt: Date.parse(r.created) || Date.now(), nextAt: 0, paused: false, reason: "" },
+      { ...RESOURCE.webhook, maxFailures: max, baseMs: this.evNum("OUTBOX_BASE_MS", RESOURCE.webhook.baseMs) }, "webhook delivery failed");
+    const tries = retry.failures;
+    if (res.ok || res.final || retry.paused) {
       drop();
       if (r.kind === "sub") {
         if (res.ok) this.sql.exec("update event_subs set last_delivery_at=?, last_error=null, failed_since=null, fails=0 where id=?", now(), r.target);
@@ -102,7 +108,7 @@ export class SpaceEvents extends SpaceGc {
       }
       return;
     }
-    const wait = Math.min(this.evNum("OUTBOX_BASE_MS", 2000) * 2 ** (tries - 1), 600_000) * (0.85 + Math.random() * 0.3); // exponential backoff, jittered
+    const wait = (retry.nextAt - Date.now()) * (0.85 + Math.random() * 0.3); // exponential backoff, jittered
     this.sql.exec("update outbox set attempts=?, next_at=?, last_error=? where id=?", tries, Math.round(Date.now() + wait), res.error ?? "error", r.id);
     if (r.kind === "sub") this.sql.exec("update event_subs set last_error=?, failed_since=coalesce(failed_since,?) where id=?", res.error ?? "connection_refused", now(), r.target);
   }
@@ -185,6 +191,7 @@ export class SpaceEvents extends SpaceGc {
     let t: EvType, args: any, st: { from: number; truncated: boolean };
     try { t = this.evType(p, "push"); args = validateArgs(t, p.arguments); this.evAuthorize(peer.id, t); st = this.evStart(p.cursor, p.maxAgeMs, 10000);
       // Cost cap: an open stream keeps the DO awake (no hibernation), so each peer gets a few streams of bounded life.
+      if (this.resourcesPaused()) throw evErr("ResourceExhausted", { reason: "background resources paused" });
       const maxStreams = this.evNum("EVENTS_MAX_STREAMS", 4);
       if ([...this.evStreams.values()].filter(x => x.peer.id === peer.id).length >= maxStreams) throw evErr("ResourceExhausted", { limit: "streams", max: maxStreams }); }
     catch (e: any) {
@@ -192,28 +199,41 @@ export class SpaceEvents extends SpaceGc {
       return Response.json({ jsonrpc: "2.0", id: rpcId ?? null, error: { code: e.code, message: e.message, ...(e.data ? { data: e.data } : {}) } });
     }
     const sp = this.spaceId, head = this.evHead(), meta = { [SUB_META]: rpcId };
-    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>(), w = writable.getWriter(), te = new TextEncoder();
-    const frame = (o: any) => w.write(te.encode(`data: ${JSON.stringify(o)}\n\n`)).catch(() => this.evStreamClose(s, false));
-    const s: EvStream = { key: ++this.evStreamSeq, peer, t, args, last: head, closed: false, timer: undefined,
+    const te = new TextEncoder(), encode = (o: any) => te.encode(`data: ${JSON.stringify(o)}\n\n`);
+    let s!: EvStream;
+    const body = resourceStream(RESOURCE.streamBytes, () => { clearInterval(s.timer); clearTimeout(s.ttl); s.closed = true; this.evStreams.delete(s.key); });
+    const frame = (o: any) => body.write(encode(o));
+    s = { key: ++this.evStreamSeq, peer, t, args, last: st.from, closed: false, timer: undefined,
       send: (method, params) => { if (!s.closed) frame({ jsonrpc: "2.0", method, params: { ...params, _meta: meta } }); },
-      finish: (reason?: string) => { frame({ jsonrpc: "2.0", id: rpcId, result: { resultType: "complete", cursor: encCursor(sp, s.last), ...(reason ? { reason } : {}), _meta: meta } }); w.close().catch(() => {}); } };
-    s.send("notifications/events/active", { cursor: encCursor(sp, st.from), truncated: st.truncated });
-    if (st.from < head) for (const r of this.sql.exec("select * from events where seq>? and seq<=? order by seq", st.from, head)) {
-      const ev = this.evRaw(r), occ = this.evOcc(peer, t, args, ev); if (occ) s.send("notifications/events/event", { ...occ, cursor: encCursor(sp, ev.seq) });
-    }
+      finish: (reason?: string) => body.close(encode({ jsonrpc: "2.0", id: rpcId, result: { resultType: "complete", cursor: encCursor(sp, s.last), ...(reason ? { reason } : {}), _meta: meta } })),
+      abort: () => body.abort() };
     this.evStreams.set(s.key, s);
-    s.timer = setInterval(() => {
-      try { this.evAuthorize(peer.id, t); } catch (e: any) { return this.evTerminate(s, e); }
-      s.send("notifications/events/heartbeat", { cursor: encCursor(sp, s.last) });
-    }, Math.min(this.evNum("EVENTS_HEARTBEAT_MS", 15000), 30000));
-    // Max life (default 5 min): end with a final result carrying the cursor; the client reconnects with it and loses nothing.
-    s.ttl = setTimeout(() => this.evStreamClose(s, true, "max_duration"), Math.min(this.evNum("EVENTS_STREAM_MAX_MS", 300000), 3600000));
-    w.closed.catch(() => this.evStreamClose(s, false)); // client aborted the request
-    return new Response(readable, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", "x-accel-buffering": "no" } });
+    s.send("notifications/events/active", { cursor: encCursor(sp, st.from), truncated: st.truncated });
+    let replayBytes = 0, replayPage = false;
+    if (st.from < head) for (const r of this.sql.exec("select * from events where seq>? and seq<=? order by seq", st.from, head)) {
+      const ev = this.evRaw(r), occ = this.evOcc(peer, t, args, ev);
+      if (occ) {
+        const bytes = encode({ jsonrpc: "2.0", method: "notifications/events/event", params: { ...occ, cursor: encCursor(sp, ev.seq), _meta: meta } });
+        // Page initial replay before it fills the bounded writer. A reconnect advances from the final cursor, rather than failing on the same history forever.
+        if (replayBytes + bytes.byteLength > RESOURCE.streamBytes - 4096) { replayPage = true; break; }
+        replayBytes += bytes.byteLength; body.write(bytes);
+      }
+      s.last = ev.seq;
+    }
+    if (replayPage) this.evStreamClose(s, true, replayBytes ? "replay_page" : "use_poll_for_large_event");
+    else if (!s.closed) {
+      s.timer = setInterval(() => {
+        try { this.evAuthorize(peer.id, t); } catch (e: any) { return this.evTerminate(s, e); }
+        s.send("notifications/events/heartbeat", { cursor: encCursor(sp, s.last) });
+      }, Math.min(this.evNum("EVENTS_HEARTBEAT_MS", 15000), 30000));
+      // Max life (default 5 min): end with a final result carrying the cursor; the client reconnects with it and loses nothing.
+      s.ttl = setTimeout(() => this.evStreamClose(s, true, "max_duration"), Math.min(this.evNum("EVENTS_STREAM_MAX_MS", RESOURCE.streamMs), 3600000));
+    }
+    return new Response(body.readable, { headers: { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", "x-accel-buffering": "no" } });
   }
   evStreamClose(s: EvStream, final: boolean, reason?: string) {
-    if (s.closed) return; s.closed = true; clearInterval(s.timer); clearTimeout(s.ttl); this.evStreams.delete(s.key);
-    if (final) s.finish(reason);
+    if (s.closed) { if (!final) s.abort(); return; } s.closed = true; clearInterval(s.timer); clearTimeout(s.ttl);
+    if (final) s.finish(reason); else s.abort();
   }
   evTerminate(s: EvStream, e: EventsError) {
     s.send("notifications/events/terminated", { error: { code: e.code, message: e.message, ...(e.data ? { data: e.data } : {}) } });
@@ -284,13 +304,13 @@ export class SpaceEvents extends SpaceGc {
     const ts = Math.floor(Date.now() / 1000);
     let sig = await signV1(sub.secret, webhookId, ts, body);
     if (sub.prev_secret && sub.prev_until && Date.parse(sub.prev_until) > Date.now()) sig += " " + await signV1(sub.prev_secret, webhookId, ts, body); // rotation grace
-    try {
-      const r = await fetch(u.href, { method: "POST", redirect: "manual", signal: AbortSignal.timeout(5000), body,
+    try { return await resourceIO(async signal => {
+      const r = await fetch(u.href, { method: "POST", redirect: "manual", signal, body,
         headers: { "content-type": "application/json", "webhook-id": webhookId, "webhook-timestamp": String(ts), "webhook-signature": sig, "X-MCP-Subscription-Id": sub.id } });
-      if (r.status >= 200 && r.status < 300) return { ok: true, text: wantText ? (await r.text()).slice(0, 4096) : (await r.body?.cancel(), undefined) };
+      if (r.status >= 200 && r.status < 300) return { ok: true, text: wantText ? new TextDecoder().decode(await resourceBytes(r, 4096)) : (await r.body?.cancel(), undefined) };
       await r.body?.cancel();
       return { ok: false, error: category(r.status), final: r.status === 410 || r.status === 413 };
-    } catch (e) { return { ok: false, error: category(null, e) }; }
+    }, RESOURCE.webhookMs); } catch (e) { return { ok: false, error: category(null, e) }; }
   }
   // Queue a subscription's matching events. File changes from one commit become ONE delivery (the last event's id and cursor,
   // the first path in `path`, all of them in `paths`), so a 50-file batch is one POST, not 50.
@@ -326,6 +346,7 @@ export class SpaceEvents extends SpaceGc {
   evFanout(e: any) {
     const ev = this.evRaw(e), sp = this.spaceId;
     for (const s of [...this.evStreams.values()]) {
+      if (s.closed) continue;
       s.last = ev.seq;
       try { this.evAuthorize(s.peer.id, s.t); } catch (err: any) { this.evTerminate(s, err); continue; }
       const occ = this.evOcc(s.peer, s.t, s.args, ev); if (occ) s.send("notifications/events/event", { ...occ, cursor: encCursor(sp, ev.seq) });
