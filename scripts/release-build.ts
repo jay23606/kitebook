@@ -18,6 +18,7 @@ import { createHash, createPrivateKey } from "crypto";
 import { TARGETS, assetName, legacyAssetName, signSums, checkSums, parseSums } from "../client/binary.ts";
 import { RELEASE_KEY } from "../client/release-key.ts";
 import { TAGLINE } from "../client/brand.ts";
+import { releaseTag } from "./release-tag.ts";
 
 const REPO = resolve(import.meta.dir, ".."), argv = process.argv.slice(2), cmd = argv[0];
 const flag = (k: string, d?: string) => { const i = argv.indexOf(`--${k}`); return i > 0 ? argv[i + 1] : d; };
@@ -26,7 +27,7 @@ const out = resolve(flag("out", join(REPO, "dist"))!), sha = (b: Buffer) => crea
 const info = () => { try { return JSON.parse(readFileSync(join(out, "release.json"), "utf8")); } catch { die(`no ${out}/release.json: run build first`); } };
 
 if (cmd === "build") {
-  const version = flag("version") ?? die("--version is required (v1.2.0, or dev-<date>-<sha> for the dev prerelease)");
+  const version = flag("version", releaseTag());
   if (!/^(v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?|dev-[0-9A-Za-z.-]+)$/.test(version!)) die(`version ${version}: use v1.2.3 or dev-<something>`);
   const release = Number(flag("release", String(Math.floor(Date.now() / 1000)))), channel = flag("channel", version!.startsWith("dev-") ? "dev" : "stable");
   if (!Number.isSafeInteger(release) || release < 1) die("--release must be a positive whole number");

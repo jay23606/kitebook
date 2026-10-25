@@ -22,6 +22,10 @@ The compiled [`client/kitebook-bin.ts`](../client/kitebook-bin.ts) contains the 
 
 ## Updates
 
+Stable source releases use UTC calendar tags: `vYYYY.MM.DD-HHMMSS`, for example `v2026.10.25-043005`. Promotion publishes the tested `dev` commit to `main` and creates its timestamp tag atomically. Existing tags are retained. Binary builds use a current UTC tag when `--version` is omitted; explicit historical versions remain supported. Signed increasing numeric release counters, rather than tag string comparisons, continue to prevent downgrade/replay.
+
+The CI `check` job runs typecheck, unit tests and the complete isolated runtime smoke on `dev` and pull requests. Promotion still requires that exact commit's CI result and a verified real-Mac run; calendar tagging does not bypass either gate.
+
 - **Source installs, available now:** `kitebook update` moves the existing checkout to its followed channel (`main` for stable, `dev` when selected), checks the new runner/server and rolls back on failure. Settings → Updates exposes the same update path. See [runner updates](runner.md#safe-updates).
 - **Binary installs, after publication:** the implemented updater verifies the pinned release key, signed checksums, an increasing release number and the new binary's self-test before replacing the old binary. These checks do not make missing release assets available. Homebrew-managed installs would update through Homebrew.
 

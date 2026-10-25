@@ -24,6 +24,10 @@ echo "$RUNS" | jq -e '[.check_runs[] | select(.name == "check")] | length > 0' >
 echo "$RUNS" | jq -e 'all(.check_runs[]; .status == "completed" and (.conclusion | IN("success", "neutral", "skipped")))' >/dev/null \
   || die "CI isn't green on ${SHA:0:7} (above); fix dev first"
 [ $MAC = 1 ] || die "CI is green on ${SHA:0:7}. Run it on a real Mac (Settings -> Updates -> Update to dev now), then rerun with --mac-ok"
-[ $DRY = 1 ] && { echo "promote: would fast-forward main ${MAIN:0:7} -> ${SHA:0:7}"; exit 0; }
-git push origin "$SHA:refs/heads/main" # a plain push: GitHub refuses it unless it's a fast-forward
-echo "promote: main ${MAIN:0:7} -> ${SHA:0:7}"
+TAG=$(bun scripts/release-tag.ts)
+[ $DRY = 1 ] && { echo "promote: would fast-forward main ${MAIN:0:7} -> ${SHA:0:7} and tag $TAG (UTC)"; exit 0; }
+git rev-parse --verify -q "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists; retry with a new timestamp"
+git tag -a "$TAG" "$SHA" -m "Kitebook $TAG (UTC)"
+# Atomic: either the checked main commit and its timestamp tag both publish, or neither does. Never force either ref.
+git push --atomic origin "$SHA:refs/heads/main" "refs/tags/$TAG"
+echo "promote: main ${MAIN:0:7} -> ${SHA:0:7}, tagged $TAG (UTC)"
