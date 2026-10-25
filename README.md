@@ -41,59 +41,17 @@ The [usage walkthrough](docs/how-to-use.md) includes requests to paste into your
 
 ## How it works
 
-```mermaid
-flowchart LR
-  subgraph Assistants["Your personal assistants"]
-    A1[Grok bot]
-    A2[Hark]
-    A3[Muse]
-    A4["Dots*"]
-  end
-  subgraph KB["Kitebook: your personal knowledge base<br/>(self-hosted workerd or a Cloudflare Worker)"]
-    S["shared memory · per-agent summaries<br/>tasks · approvals"]
-  end
-  subgraph Mac["Your Mac"]
-    R[Kitebook runner]
-    subgraph Agents["Coding agents, each in its own git worktree"]
-      G1[Pi]
-      G2[Codex]
-      G3[Claude Code]
-      G4["opencode, Gemini, …"]
-    end
-    O(["You approve:<br/>Mac dialog or phone"])
-  end
-  Assistants <-- "MCP over HTTPS:<br/>read and write memory, send tasks" --> KB
-  R -- "outbound connection<br/>(no open ports)" --> KB
-  O -. approves .-> R
-  R --> Agents
-  Agents -- "branch · diff · tests · summary" --> R
-  R -- "result and what was learned" --> KB
-```
-<sub>\* Dots: untested / unverified.</sub>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
+  <img alt="Daily assistants and coding agents share Kitebook’s durable knowledge and files over MCP. Optional coding tasks pass through a local runner and owner permissions." src="docs/images/architecture.svg" width="1120">
+</picture>
 
 Daily agents can exchange files, datasets and handoffs without GitHub, then recover published work after a sandbox restart. See [Restart-safe workspaces](docs/workspace-sync.md).
 
 Connected assistants can retrieve the knowledge and files their permissions allow. Published context is available to the others when they next read or synchronize it. For optional coding work, your Mac's runner connects out and hands authorized tasks to a coding agent in a separate git worktree.
 
-```mermaid
-sequenceDiagram
-  participant AI as Assistant (e.g. Hark)
-  participant K as Kitebook (KB)
-  participant R as Runner (your Mac)
-  participant You
-  participant Ag as Coding agent
-  AI->>K: asks: task_create (with relevant memory attached)
-  R->>K: picks up the task (outbound)
-  R->>You: approve this exact task?
-  You-->>R: approve
-  R->>Ag: run in a new git worktree
-  Ag-->>R: branch, diff, tests, summary
-  R->>K: result + summary + learnings saved
-  K-->>AI: notified (events or polling)
-  Note over K: every other assistant and agent<br/>now sees what was done
-```
 
-One task's life: an assistant asks, Kitebook attaches what it already knows, your runner asks you, and only then does an agent run. The result, a short summary and anything the agent learned are written back into the knowledge base, so the next assistant or agent starts from there. More detail, including trust boundaries and what never leaves your Mac: [docs/architecture.md](docs/architecture.md).
+One task's life: an assistant asks, Kitebook attaches what it already knows, your runner checks your permission, and then an agent runs. The result, a short summary and anything the agent learned are written back into the knowledge base, so the next assistant or agent starts from there. More detail, including trust boundaries and what never leaves your Mac: [docs/architecture.md](docs/architecture.md).
 
 ## Who it's for, and why
 For one person who uses several daily assistants for ongoing work. Research, files and decisions can end up scattered across platforms, making it harder to resume. Kitebook gives those assistants one workspace for selected context and recoverable handoffs. Coding agents can use that context too, when needed.
