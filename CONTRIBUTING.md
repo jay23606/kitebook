@@ -18,19 +18,21 @@ AI tools are allowed. The contributor is responsible for understanding every cha
 Please don't submit batches of unrelated PRs, duplicate implementations, speculative refactors or changes whose only purpose is to increase contribution counts. A small patch is welcome when it solves an agreed problem and has appropriate verification. Maintainers may close PRs without agreed scope, reproducible value or accurate verification evidence. Review and merge are not guaranteed.
 
 ## Setup (4 commands)
-Needs Node 22+, [Bun](https://bun.sh) 1.4+ (CI pins 1.4.3), `jq`, `curl`, `git` and `python3`. For the headless-browser checks: `pip install playwright && python3 -m playwright install chromium` (without it those checks print `SKIP`).
+Routine checks need Node 22+ and [Bun](https://bun.sh) 1.4+ (CI pins 1.4.3). The optional broad smoke also uses `jq`, `curl`, `git` and `python3`. For its headless-browser checks: `pip install playwright && python3 -m playwright install chromium` (without it those checks print `SKIP`).
 ```bash
 git clone https://github.com/um1b/kitebook kitebook && cd kitebook
 npm install && echo ADMIN_TOKEN=dev-admin-token > .dev.vars
 bun run typecheck             # tsc, must be 0 errors
-npm run test:fast            # unit tests + the base smoke checks, about 2 min
-npm test                      # unit tests + the full smoke (~360 checks, ~15 min on a 2-CPU / 8 GB box), must end in ALL PASSED (N checks, Ms)
+npm run test:fast            # unit tests
+npm test                     # unit tests + production build + critical integration
 ```
 `npx cf dev` runs a local Kitebook (Workers + Durable Objects + R2 emulation) on `http://127.0.0.1:5173`, with state in `.relay-data/`. It is a development server for this machine: it answers only localhost and only as the Worker (Vite's own file serving is refused), and it is never what a self-host runs (that's `scripts/serve.sh`, plain workerd). Open `/start` and sign in with `dev-admin-token`.
 
 ## Tests
+
+Routine CI runs typecheck, unit tests, a production build and `bun scripts/release-check.ts` against isolated workerd storage. The large smoke suite below is an optional deep audit; it is no longer required for each PR or release.
 - **`bun run typecheck`**: `src/` against the generated Workers types, and `client/` + `scripts/` against Bun's types. CI fails on any error.
-- **`./smoke.sh`**: the real test suite. It boots `cf dev` in a temp dir, then drives the admin CLI, the `kitebook` CLI, MCP, OAuth, a runner with fake agents, signed tasks, the KB and so on. Each check is one `pass "..."` line, and the first failure stops the run with `FAIL ...`.
+- **`./smoke.sh`**: the optional broad audit suite. It boots `cf dev` in a temp dir, then drives the admin CLI, the `kitebook` CLI, MCP, OAuth, a runner with fake agents, signed tasks, the KB and so on. Each check is one `pass "..."` line, and the first failure stops the run with `FAIL ...`.
   - Every run is isolated: its own temp dir (HOME, TMPDIR, Kitebook data and cache inside it), a snapshot of the checkout (so it never writes into your folder), its own block of 100 free ports below 32768, and on exit (pass, fail or Ctrl-C) it stops every process it started. So several runs can go at once, from one checkout or several; memory is the limit: a run peaks around 1.5 GB, so on a small machine (8 GB, no swap) keep it to 2 at once. `PORT=7801 ./smoke.sh` pins the port base instead (helpers use `$PORT`+51..99).
   - Public upgrade checks start at Kitebook's first published release. Pre-public Relay auth migration is optional (`KITEBOOK_LEGACY_TESTS=1` in a checkout retaining its old snapshot); public CI never needs private history.
   - `./smoke.sh --sections quick-ask,signed` runs the setup and core checks plus the sections whose heading contains those words (`=key` matches a key exactly); `./smoke.sh --list` lists the sections and their keys. `SMOKE_ONLY=core` / `SMOKE_LIST=1` still work. Sections build on earlier fixtures. Use `python3 scripts/smoke-plan.py smoke.sh --select quick-ask,signed` to resolve prerequisites, then pass its output to `--sections`. A selected run is reported as targeted coverage, not a full-suite pass.
@@ -38,10 +40,10 @@ npm test                      # unit tests + the full smoke (~360 checks, ~15 mi
   - Sharing a machine (several people or agents testing at once)? Run each smoke through `scripts/smoke-slot.sh`, a counting semaphore made of `mkdir` locks (works where `flock` doesn't): `scripts/smoke-slot.sh -- env SKIP_NTFY=1 ./smoke.sh > smoke.log 2>&1` waits for one of the machine's slots (`-n`/`KITEBOOK_SMOKE_SLOTS`, default 2) and frees it when the run ends, however it ends; a split run holds as many slots as it has runs (`scripts/smoke-slot.sh -k 2 -- scripts/smoke-par.sh -j 2`); it takes them all at once, and after 5 min of waiting it reserves the machine (keeps each slot as it frees, other waiters hold off) so single runs can't starve it. Everyone must use the same lock prefix (`--lock`/`KITEBOOK_SMOKE_LOCK`, default `$TMPDIR/kitebook-smoke`). Slot 1 is `<prefix>.lockdir`, the directory a plain single `mkdir` lock would use, so a script that only knows that lock still counts as one smoke. A slot whose holder is gone (dead pid, a reboot) is taken over; `--status` shows who holds what.
   - The last lines count the checks and the time: `smoke: N checks in Ms; slowest sections: ...` and `ALL PASSED (N checks, Ms)`. A failure prints `FAIL ...`, and a script error prints `FAIL (script error) at line N`.
   - **The smoke has a size budget.** A full run fails once its checks pass `CHECK_BUDGET` (near the end of `smoke.sh`). The smoke was trimmed from 1,029 checks and 20+ minutes to 361 on 2026-10-23 (budget 397, the measured count +10%), so it doesn't grow back: a new feature extends or replaces an existing check (one `pass` per behaviour, several fields in one call), and doesn't add a section. Raise the budget only in the commit that removes as many checks elsewhere, or with the owner's OK.
-  - Browser checks (`scripts/browser-check.py`, headless Chromium via Playwright) print `SKIP` when there is no browser; `KITEBOOK_REQUIRE_BROWSER=1` (set in CI) turns a skip into a failure.
-  - `SKIP_NTFY=1` skips the one test that talks to the public ntfy.sh. CI always sets it.
+  - Browser checks (`scripts/browser-check.py`, headless Chromium via Playwright) print `SKIP` when there is no browser; `KITEBOOK_REQUIRE_BROWSER=1` turns a skip into a failure.
+  - `SKIP_NTFY=1` skips the one test that talks to the public ntfy.sh. Use it for a fully local audit.
   - Smoke never touches a real Kitebook, a real Mac or a real coding agent. Keep it that way.
-- **`bun test client/`**: the unit tests (`*.test.ts`); `npm test` and CI run them before the smoke, so the smoke never runs them again. Pure logic (parsing, argv shapes, crypto vectors) belongs here, not in the smoke.
+- **`bun test client/`**: the unit tests (`*.test.ts`); `npm test` and CI run them before the critical integration check. Pure logic (parsing, argv shapes, crypto vectors) belongs here, not in the smoke.
 - **Every behaviour change is covered, inside the budget.** Extend the related section's check (one more field in its `jq`, one more case in its loop) or replace a check the change makes obsolete. What the smoke doesn't check: UI wording and layout (no `grep` on page copy), the same code path once per agent, screenshots.
 
 ## Where things live
@@ -59,16 +61,17 @@ npm test                      # unit tests + the full smoke (~360 checks, ~15 mi
 | `client/guard.ts` | The runner's destructive-command / deploy / spend guard |
 | `client/mcp-stdio.mjs` | stdio ⇄ `/mcp` bridge for MCP clients that only do stdio |
 | `docs/` | User docs (start at `docs/quickstart.md`); README "Not built yet" lists what's next |
-| `smoke.sh` | The end-to-end suite |
+| `scripts/release-check.ts` | The critical production integration check |
+| `smoke.sh` | Optional broad audit suite |
 
 ## Branches and pull requests
 - Two long-lived branches: **`dev`**, where changes land first, and **`main`**, the stable branch people install. `main` only moves by a fast-forward to a `dev` commit that CI passed and that ran on a real Mac (`scripts/promote.sh`).
 - Fork, then branch from `dev`: `fix/<short-topic>` or `feat/<short-topic>`. (`hark/*` branches are made by the maintainer's own agents, and merge into `dev` too.)
 - **PRs target `dev`**, not `main`. One focused change per PR. Rebase on `dev` rather than merging it in.
-- For code changes, run `bun run typecheck` and `npm run test:fast`. Runner or server changes need the affected real-runtime smoke sections, including their prerequisites. Run the full smoke for broad changes to authentication, storage, task execution or updates, and before promoting a release. A focused change does not need unrelated cross-platform packaging checks. A documentation or style-only change does not need the full smoke. Give the commands and actual results in the PR, including failures or skips. For documentation-only changes, validate affected links and any GitHub forms, and explain why runtime tests were not run.
+- For code changes, run `npm run typecheck` and focused unit tests. Before release promotion, run `npm test` (also enforced by CI): all unit tests, a production build and the critical integration check. Investigations or broad changes can additionally use relevant smoke sections with their prerequisites; the full audit is optional. A focused change does not need unrelated cross-platform packaging checks. A documentation or style-only change does not need the full smoke. Give the commands and actual results in the PR, including failures or skips. For documentation-only changes, validate affected links and any GitHub forms, and explain why runtime tests were not run.
 - Commit messages say what changed and why, in plain words. A trailing `(smoke N)` with the new pass count is welcome.
 - Update `README.md` / `docs/*` / `src/guide.ts` when user- or agent-visible behaviour changes. User-facing text follows [docs/glossary.md](docs/glossary.md) (say workspace, connected app, folders, not space, peer, `**`).
-- Never commit secrets, a real `.dev.vars`, `runner.json` or keys. CI runs gitleaks.
+- Never commit secrets, a real `.dev.vars`, `runner.json` or keys.
 
 ## Code style
 Dense TypeScript that matches the code around it. Comments explain *why*, not what. No new dependencies without a reason in the PR: the Worker's are listed in `package.json` (Better Auth and its plugins, kysely, zod, jose, aws4fetch, all pinned), and the runner has none beyond Bun.
