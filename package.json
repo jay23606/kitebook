@@ -8,8 +8,8 @@
 		"build": "cf build",
 		"deploy": "cf deploy",
 		"typecheck": "cf workers types > /dev/null && tsc -p tsconfig.json && tsc -p tsconfig.client.json && tsc -p tsconfig.test.json",
-		"test": "bun test client/ && SKIP_NTFY=1 ./smoke.sh",
-		"test:fast": "bun test client/ && SKIP_NTFY=1 SMOKE_ONLY=core ./smoke.sh",
+		"test": "bun test client/ && npm run build && bun scripts/release-check.ts",
+		"test:fast": "bun test client/",
 		"smoke": "./smoke.sh"
 	},
 	"engines": {
