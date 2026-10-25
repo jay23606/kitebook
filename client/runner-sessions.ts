@@ -5,11 +5,13 @@
 //     (sessions_reply; the server keeps it in memory until the asker reads it). A server can't grant this: an unsigned or forged policy reads nothing.
 //   session tasks (task.session from session_create / session_send): sessionPrep() before the run. fork: a copy of the owner's session
 //     seeds the NEW session (context transplant; the source is only read), or the agent's own fork through its live driver; continue:
-//     refused while the session is open anywhere (or when we can't tell), else the run resumes that very session (the owner approved it:
-//     the server never signs one of these to auto-run, and approve() always asks a human for them, runner-approval.ts inPlace).
+//     running or uncertain originals use a copy; known-idle originals follow the owner-signed scope and approval choice.
+//     Legacy in-place permissions still ask a person (runner-approval.ts).
 // runner.json "sessions": false turns the session tools off on this computer (answers "refused"); KITEBOOK_SESSIONS_HOME (tests) reads another home.
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
 import { realpathSync } from "fs";
+import { resolve, sep } from "path";
+import { sessionLevel, sessionDecision, type SessionRule, type SessionIdentity } from "./session-policy.ts";
 import { createHash } from "crypto";
 import { cfg, cfgNow, call, log, me, on } from "./runner-ctx.ts";
 import * as P from "./policy.ts";
@@ -26,15 +28,53 @@ let store: P.PolicyStore | null = null;
 export async function advert(projects: Record<string, any> | undefined) {
   if (cfg.sessions === false) return null;
   const roots: Record<string, string> = {}; for (const [k, v] of Object.entries<any>(projects ?? {})) { if (!v?.path) continue; let p = String(v.path); try { p = realpathSync(p); } catch {} roots[k] = createHash("sha256").update(p.replace(/\/+$/, "")).digest("hex"); }
-  return { v: 1, agents: [...SS.SESSION_AGENTS], modes: ["new", "fork", "continue"], roots };
+  return { v: 2, agents: [...SS.SESSION_AGENTS], modes: ["new", "fork", "continue"], roots };
 }
 
 // What the owner signed for this app: "off" | "read" | "write", or why it can't be trusted
-export async function allowed(app: string): Promise<{ level: "off" | "read" | "write"; why?: string }> {
+export type SessionGrant = { level: "off" | "read" | "write"; why?: string; entry?: any; identity?: SessionIdentity };
+export async function allowed(app: string): Promise<SessionGrant> {
   if (cfg.sessions === false) return { level: "off", why: `runner.json "sessions": false on this computer` };
-  let r: any; try { r = await call("policy", {}); } catch (e: any) { return { level: "off", why: `couldn't read your permissions (${e.message})` }; }
-  store ??= P.storeFor(me.name); return P.sessionAccess(r?.envelope, ownerKeys(), cfg.space, store, app);
+  let r: any; try { r = await call("policy", { from: app }); } catch (e: any) { return { level: "off", why: `couldn't read your permissions (${e.message})` }; }
+  store ??= P.storeFor(me.name); const verified = P.sessionAccess(r?.envelope, ownerKeys(), cfg.space, store, app); if (verified.level === "off") return verified;
+  const entry = r.envelope.policy.apps?.[app], identity = r.session_identity, l = sessionLevel(entry, identity); return l === "read" || l === "write" ? { level: l, entry, identity } : { level: "off", why: `session access for ${app} is off or its saved consent ended (Settings -> Assistants -> Agent sessions)` };
 }
+
+const digest = (x: any) => createHash("sha256").update(JSON.stringify(x)).digest("hex");
+const permits = new Map<string, { task: string; grant: string; expires: number }>();
+const grantEntry = (g: SessionGrant) => g.entry ?? { sessions: g.level };
+const taskKey = (t: any) => digest([t.id,t.from,t.project,t.agent,t.model,t.instructions,t.session,t.attempt]);
+const real = (p: string) => { try { return realpathSync(p); } catch { return resolve(p); } };
+export function sessionProject(m: SS.Meta): string | null {
+  const projects = Object.entries<any>(cfg.projects ?? {}).filter(([,p]) => p?.path).sort((a,b) => String(b[1].path).length - String(a[1].path).length);
+  for (const [name,p] of projects) {
+    const root = real(String(p.path)), cwd = m.cwd ? real(m.cwd) : "";
+    if (cwd && (cwd === root || cwd.startsWith(root + sep)) || !cwd && m.agent === "gemini" && SS.cwdOk(m, root)) return name;
+  }
+  return null;
+}
+function decision(g: SessionGrant, project: string | null, action: "read" | "fork" | "continue") { return sessionDecision(grantEntry(g), g.identity, project, action); }
+function manual(t: any, g: SessionGrant) { const p = permits.get(t.id); if (!p || p.expires <= Date.now()) { permits.delete(t.id); return false; } return p.task === taskKey(t) && p.grant === digest(grantEntry(g)); }
+export async function markManual(t: any) {
+  const g = await hooks.allowed(String(t.from ?? "")); if (g.level !== "write") return false;
+  for (const [id,p] of permits) if (p.expires <= Date.now()) permits.delete(id);
+  if (permits.size >= 256) permits.delete(permits.keys().next().value!);
+  permits.set(t.id, { task: taskKey(t), grant: digest(grantEntry(g)), expires: Date.now() + 15 * 60_000 }); return true;
+}
+// The source's actual local folder decides scope, never a caller-supplied destination project.
+export async function taskConsent(t: any, supplied?: SessionGrant) {
+  const g = supplied ?? await hooks.allowed(String(t.from ?? "")); if (g.level !== "write") return { allowed: false, automatic: false, ask: true, why: g.why ?? "session access ended", keys: [] as string[], rule: false };
+  let project = t.project ?? null, action: "fork" | "continue" = t.session?.mode === "continue" ? "continue" : "fork";
+  if (t.session?.from) {
+    const m = SS.find(t.session.agent,t.session.from,opts()); if (!m) return { allowed: false, automatic: false, ask: true, why: `no ${t.session.agent} session ${t.session.from} on this computer`, keys: [] as string[], rule: !!g.entry?.session_rule };
+    project = sessionProject(m); const live = await SS.liveOf(m,opts()); if (live.live !== false) action = "fork";
+  }
+  const d = decision(g,project,action), r: SessionRule | undefined = g.entry?.session_rule;
+  // Both the source and destination must be inside the saved automatic scope.
+  const destination = !r || r.projects.includes(t.project);
+  return { ...d, automatic: d.automatic && destination, ask: d.ask || !destination, why: destination ? d.why : "destination project is outside your saved permission", keys: r?.keys ?? [], rule: !!r };
+}
+function readable(g: SessionGrant, m: SS.Meta) { return decision(g,sessionProject(m),"read").allowed; }
 
 const busy = new Set<string>();
 export async function onRequest(id: string) {
@@ -46,9 +86,12 @@ export async function onRequest(id: string) {
     const a = await hooks.allowed(q.from);
     if (a.level === "off") { audit({ type: "sessions_refused", from: q.from, op: q.op, why: a.why }); log(`sessions ${q.op} from ${q.from}: refused (${a.why})`); return reply(false, `refused: ${a.why}`); }
     try {
-      const r = q.op === "search" ? await SS.search(q.args ?? {}, opts()) : q.op === "get" ? await SS.get(q.args, opts()) : q.op === "status" ? await SS.status(q.args, opts()) : null;
+      const scoped = a.entry?.session_rule ? { ...opts(), filter: (m: SS.Meta) => readable(a,m) } : opts();
+      if (q.op !== "search") { const m = SS.find(q.args?.agent,q.args?.id,opts()); if (!m && !a.entry?.session_rule) return reply(false,`no ${q.args.agent} session ${q.args.id} on this computer (sessions_search lists them)`); if (!m || !readable(a,m)) return reply(false,"refused: session is outside the projects you allowed; update this app in Settings → Connected apps"); }
+      const r = q.op === "search" ? await SS.search(q.args ?? {}, scoped) : q.op === "get" ? await SS.get(q.args, opts()) : q.op === "status" ? await SS.status(q.args, opts()) : null;
       if (!r) return reply(false, `unknown request ${q.op}`);
-      if ((await hooks.allowed(q.from)).level === "off") return reply(false, "refused: session access ended while reading");
+      const after = await hooks.allowed(q.from);
+      if (after.level === "off" || digest(grantEntry(after)) !== digest(grantEntry(a))) return reply(false, "refused: session access ended while reading");
       const n = "sessions" in r ? r.sessions.length : "messages" in r ? r.messages.length : 1;
       audit({ type: "sessions_read", from: q.from, op: q.op, agent: q.args?.agent ?? null, id: q.args?.id ?? null, n });
       log(`sessions ${q.op} from ${q.from}: ${"sessions" in r ? `${n} session(s)` : `${q.op === "status" ? "metadata" : `${n} message(s)`} of ${q.args.agent} ${q.args.id}`}`);
@@ -84,29 +127,38 @@ export const hooks = { allowed };
 // again when the run starts (runTask), so a task queued or waiting for approval dies once the owner takes the grant back.
 // continue degrades to a fork (never in place) when we can't tell whether the session is open elsewhere, or the agent can't resume by id.
 export async function sessionPrep(t: any, liveFork?: (agent: string) => boolean | Promise<boolean>, dry = false): Promise<{ preamble?: string; resume?: string; fork?: { from: string }; error?: string; note?: string }> {
-  const s = t.session ?? {}; if (s.mode === "new" || !s.mode) return {};
+  const s = t.session ?? {}; if (!s.mode) return {};
   const g = await hooks.allowed(String(t.from ?? ""));
+  if (s.mode === "new" && !g.entry?.session_rule) return {};
   if (g.level !== "write") { const why = g.level === "read" ? `you let ${t.from} read your agent sessions, not continue them (Settings -> Assistants -> Agent sessions)` : g.why ?? "not allowed";
     audit({ type: "sessions_refused", task: t.id ?? null, from: t.from ?? null, op: s.mode, why }); return { error: `refused: ${why}` }; }
-  if (!(SS.SESSION_AGENTS as readonly string[]).includes(String(s.agent))) return { error: `can't read ${s.agent} sessions on this computer` };
+  if (s.mode !== "new" && !(SS.SESSION_AGENTS as readonly string[]).includes(String(s.agent))) return { error: `can't read ${s.agent} sessions on this computer` };
+  const consent = await taskConsent(t,g);
+  if (!consent.allowed) return { error: `refused: ${consent.why}` };
+  if (consent.rule && consent.ask && !dry && !manual(t,g)) return { error: "refused: this session request needs fresh owner approval" };
+  if (s.mode === "new") return {};
   const m = SS.find(s.agent, s.from, opts()); if (!m) return { error: `no ${s.agent} session ${s.from} on this computer (sessions_search lists them)` };
+  const stillAllowed = async () => { const current = await hooks.allowed(String(t.from ?? "")); return current.level === "write" && digest(grantEntry(current)) === digest(grantEntry(g)); };
   const fork = async (note?: string) => {
     if (dry) return note ? { note } : {};
     audit({ type: "sessions_fork", task: t.id, from: t.from, agent: s.agent, id: s.from, ...(note ? { instead_of: "continue", why: note } : {}) });
     if (note) log(`session task ${t.id}: forking instead of continuing in place (${note})`);
     // the agent's own fork (a copy; Codex thread/fork, Claude forkSession) when its live driver is up here and the same agent runs the task;
     // if that live start then fails, the runner seeds the copy with forkPreamble() instead (the CLI path can't fork)
-    if ((!t.agent || t.agent === s.agent) && await liveFork?.(s.agent)) return { fork: { from: s.from }, ...(note ? { note } : {}) };
-    return { preamble: await forkPreamble(s.agent, s.from), ...(note ? { note } : {}) };
+    if ((!t.agent || t.agent === s.agent) && await liveFork?.(s.agent)) return await stillAllowed() ? { fork: { from: s.from }, ...(note ? { note } : {}) } : { error: "refused: session permission changed before copying" };
+    const preamble = await forkPreamble(s.agent,s.from);
+    return await stillAllowed() ? { preamble, ...(note ? { note } : {}) } : { error: "refused: session permission changed while reading" };
   };
   if (s.mode === "fork") return fork();
   if (s.mode === "continue") {
     if (t.agent && t.agent !== s.agent) return { error: `that session belongs to ${s.agent}; ${t.agent} can't continue it in place (send it without mode to fork it)` };
     const lv = await SS.liveOf(m, opts());
+    if (lv.live && g.entry?.session_rule) return fork("the original is running; continuing a copy instead");
     if (lv.live) return { error: `that ${s.agent} session is open right now (${lv.why}); continuing it would mix two writers. Send it again without mode (a fork) to continue a copy` };
     if (lv.live == null) return fork(`can't tell whether that ${s.agent} session is open elsewhere`);
     if (!resumesById(s.agent)) return fork(`${s.agent} here can't resume a session it didn't start`);
     if (dry) return {};
+    if (!(await stillAllowed())) return { error: "refused: session permission changed before continuing" };
     audit({ type: "sessions_continue", task: t.id, from: t.from, agent: s.agent, id: s.from });
     return { resume: s.agent === "pi" ? m.file : s.from };
   }

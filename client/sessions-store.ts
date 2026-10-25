@@ -31,7 +31,7 @@ export type Msg = { role: "user" | "assistant" | "tool" | "system"; text: string
 // file: the transcript path (internal: never sent to the server)
 export type Meta = { id: string; agent: Agent; title: string; cwd: string; updatedAt: number; file: string; size: number; forkedFrom?: string | null };
 export type Row = Omit<Meta, "file" | "size"> & { snippet: string; live: boolean | null; live_why: string | null; match?: string };
-export type Opts = { home?: string; env?: Record<string, string | undefined>; now?: number; agentsJson?: () => Promise<any[] | null>; index?: string | false };
+export type Opts = { home?: string; env?: Record<string, string | undefined>; now?: number; agentsJson?: () => Promise<any[] | null>; index?: string | false; filter?: (m: Meta) => boolean };
 
 export const LIMITS = { files: 2000, scan: 400, headBytes: 64 * 1024, tailBytes: 256 * 1024, fullBytes: 8 * 1024 * 1024, indexText: 8 * 1024, indexRows: 600, sampleBytes: 256 * 1024, msgChars: 4000, snippet: 240, freshMs: 90_000, zstBytes: 2 * 1024 * 1024, dbRows: 5000 };
 export const clean = (s: string) => redactLog(String(s ?? ""), [], { emails: false });
@@ -219,10 +219,10 @@ const safeRead = (m: Meta, o: Opts): Msg[] => { try { return R[m.agent].read(m, 
 
 // ---------- public: list, search, get ----------
 const want = (a?: string | null): Agent[] => { if (!a) return [...SESSION_AGENTS]; const x = String(a).toLowerCase(); if (!(SESSION_AGENTS as readonly string[]).includes(x)) throw new Error(`agent: one of ${SESSION_AGENTS.join(", ")}`); return [x as Agent]; };
-const cwdOk = (m: Meta, cwd?: string | null) => !cwd || m.cwd === cwd || m.cwd.startsWith(cwd.replace(/\/$/, "") + "/") || (m.agent === "gemini" && basename(dirname(dirname(m.file))) === createHash("sha256").update(cwd).digest("hex"));
+export const cwdOk = (m: Meta, cwd?: string | null) => !cwd || m.cwd === cwd || m.cwd.startsWith(cwd.replace(/\/$/, "") + "/") || (m.agent === "gemini" && basename(dirname(dirname(m.file))) === createHash("sha256").update(cwd).digest("hex"));
 export function listAll(o: Opts & { agent?: string | null; cwd?: string | null; since?: number | null } = {}): Meta[] {
   const out: Meta[] = []; for (const a of want(o.agent)) { let l: Meta[] = []; try { l = R[a].list(o); } catch {} for (const m of l) if (cwdOk(m, o.cwd) && (!o.since || m.updatedAt >= o.since)) out.push(m); }
-  return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  return out.filter(m => !o.filter || o.filter(m)).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 export async function search(q: { query?: string; agent?: string | null; cwd?: string | null; since?: number | string | null; limit?: number }, o: Opts = {}): Promise<{ sessions: Row[]; scanned: number; total: number; truncated: boolean }> {
   const since = q.since == null || q.since === "" ? null : typeof q.since === "number" ? q.since : ms(q.since) ?? ageMs(String(q.since), o.now);

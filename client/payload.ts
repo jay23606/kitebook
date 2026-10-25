@@ -1,3 +1,4 @@
+import { sessionRuleWords, type SessionRule } from "./session-policy.ts";
 // What gets hashed and signed, shared by the runner (client/approval.ts, client/sign.ts, client/policy.ts), the server (src/policy.ts
 // signs tasks for an app the owner let run on its own) and the owner's browser (the Permissions panel signs the policy over canon()).
 // Pure, no imports beyond chain.ts: it's bundled into the Worker and fetched by installed runners. Change it in one place only.
@@ -64,12 +65,12 @@ export function cmdShape(c: any): string | null {
   return JSON.stringify(c).length > 2000 ? "too large" : null;
 }
 // Sessions are enabled by default; explicit off/read overrides remain authoritative.
-export type PolicyEntry = { tasks: "ask" | "auto" | "off"; projects: string[]; push?: boolean; until?: number | null; keys?: string[]; sessions?: "off" | "read" | "write" };
+export type PolicyEntry = { tasks: "ask" | "auto" | "off"; projects: string[]; push?: boolean; until?: number | null; keys?: string[]; sessions?: "off" | "read" | "write" | null; session_rule?: SessionRule };
 export const SESSION_WORDS: Record<string, string> = { off: "can't see your agent sessions", read: "can search and read your agent sessions on your computers", write: "can search, read and continue your agent sessions (a copy; continuing one in place asks you)" };
-export const sessionsOf = (e: any): "off" | "read" | "write" => e?.sessions == null ? "write" : ["off", "read", "write"].includes(e.sessions) ? e.sessions : "off";
+export const sessionsOf = (e: any): "off" | "read" | "write" => e?.session_rule ? e.session_rule.access === "read" ? "read" : "write" : e?.sessions == null ? "write" : ["off", "read", "write"].includes(e.sessions) ? e.sessions : "off";
 // Changing task/folder permissions must preserve an explicit session choice, including Off.
-export const keepSessions = (prev: any, next: any) => ["off", "read", "write"].includes(prev?.sessions) && !(next && Object.prototype.hasOwnProperty.call(next, "sessions"))
-  ? { ...(next ?? { tasks: "ask", projects: [] }), sessions: prev.sessions } : next;
+export const keepSessions = (prev: any, next: any) => (prev?.session_rule || ["off", "read", "write"].includes(prev?.sessions)) && !(next && Object.prototype.hasOwnProperty.call(next, "sessions"))
+  ? { ...(next ?? { tasks: "ask", projects: [] }), sessions: prev.sessions, ...(prev.session_rule ? { session_rule: prev.session_rule } : {}) } : next;
 // the entry that lets `from` run in `project` on its own now, or why not (plain words: it goes into the review page's "why you're asked")
 export function autoEntry(p: any, from: string, project: string | null | undefined, now = Date.now()): { entry: PolicyEntry } | { why: string } {
   const e: PolicyEntry | undefined = p?.apps?.[from];
@@ -133,7 +134,7 @@ export function describeExperimental(x: Experimental | null | undefined): string
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 // One line per change, the way the panel and its audit list say it ("Hark can now run tasks in kitebook on its own until Oct 25").
 export function describeEntry(app: string, e: PolicyEntry | null | undefined): string {
-  const s = e?.sessions == null || sessionsOf(e) === "off" ? "" : `; it ${SESSION_WORDS[sessionsOf(e)]}`;
+  const s = e?.sessions == null && !e?.session_rule || sessionsOf(e) === "off" ? "" : `; it ${e?.session_rule ? sessionRuleWords(e.session_rule) : SESSION_WORDS[sessionsOf(e)]}`;
   if (!e || e.tasks === "ask") return `${app} asks you before every task${s}`;
   if (e.tasks === "off") return `${app} can't send tasks or push${s}`;
   return `${app} can now run tasks in ${(e.projects ?? []).join(", ") || "no project"} on its own${e.until ? ` until ${day(Number(e.until))}` : ""}${e.push ? ", and push its branches" : ""}${s}`;
@@ -146,8 +147,8 @@ export function describeAccess(a: { mode: string; folders?: string[] } | null | 
 // access.send: whether the change gave (true) or took away (false) sending tasks; said when the policy entry itself didn't change (newuser #17:
 // "Its folder + send tasks" logged only "can read and edit only kb/claude-code")
 export function summarize(app: string, prev: PolicyEntry | null | undefined, next: PolicyEntry | null | undefined, access?: { mode: string; folders?: string[]; send?: boolean } | null): string {
-  const parts: string[] = [], bare = (e: any) => { if (!e) return null; const { sessions: _s, ...r } = e; return r.tasks === "ask" && !(r.projects ?? []).length && Object.keys(r).every(k => ["tasks", "projects"].includes(k)) ? null : r; };
-  if (canon(bare(prev)) === canon(bare(next)) && sessionsOf(prev) !== sessionsOf(next)) parts.push(`${app} ${SESSION_WORDS[sessionsOf(next)]}`); // only the Agent sessions switch moved
+  const parts: string[] = [], bare = (e: any) => { if (!e) return null; const { sessions: _s, session_rule: _r, ...r } = e; return r.tasks === "ask" && !(r.projects ?? []).length && Object.keys(r).every(k => ["tasks", "projects"].includes(k)) ? null : r; };
+  if (canon(bare(prev)) === canon(bare(next)) && (sessionsOf(prev) !== sessionsOf(next) || canon(prev?.session_rule ?? null) !== canon(next?.session_rule ?? null))) parts.push(`${app} ${next?.session_rule && sessionsOf(next) !== "off" ? sessionRuleWords(next.session_rule) : SESSION_WORDS[sessionsOf(next)]}`); // only the Agent sessions switch moved
   else if (canon(prev ?? null) !== canon(next ?? null)) parts.push(describeEntry(app, next));
   if (access) parts.push(`${parts.length ? "it" : app} can ${describeAccess(access)}${parts.length || access.send === undefined ? "" : access.send ? " and send tasks to your Mac (you approve each one)" : "; it can't send tasks"}`);
   return parts.join("; ") || `${app}: nothing changed`;

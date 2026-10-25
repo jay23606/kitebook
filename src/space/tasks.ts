@@ -612,16 +612,23 @@ export function taskOps(this: Space): Record<string, Op> {
       // Run tasks without asking (Settings top row, client/payload.ts autorunOn): the same, with the relay-held autorun key, for the owner's OWN apps only, while
       // they're still connected (senderState); an app's own entry wins where it applies.
       let standing: any = null, autoRun = false;
-      if (needsApproval && (peer.kind === "assistant" || peer.kind === "coding_agent") && sess?.mode !== "continue") { // continuing an owner's session in place always asks the owner
+      if (needsApproval && (peer.kind === "assistant" || peer.kind === "coding_agent") && sess?.mode !== "continue" && !(sess && this.metaJ("policy")?.policy?.apps?.[peer.name]?.session_rule)) { // continuing an owner's session in place always asks the owner
         if (sig) { const ae = autoEntry(this.metaJ("policy")?.policy, peer.name, a.project ?? null); if ("entry" in ae && (ae.entry.keys ?? []).includes(String(sig.key))) standing = ae.entry; }
         else { const ss = await this.standingSig(peer.name, a.project ?? null);
           if (ss) { const e = await signStored(this.loadTask(id), ss.key); this.sql.exec("update tasks set limits=? where id=?", JSON.stringify({ ...lim, _sig: e }), id); standing = ss.entry; autoRun = !!ss.autorun; } } }
+      // Session consent signs only session tasks, independently of task autorun. The runner verifies the signed rule and actual source folder.
+      const sr = sess && this.metaJ("policy")?.policy?.apps?.[peer.name]?.session_rule;
+      if (sr?.approval === "auto" && sr.access !== "read" && sr.projects.includes(a.project) && !sig) {
+        const k = this.metaJ(`appkey:${peer.name}`);
+        if (k && sr.keys.includes(k.pub)) { const signature = await signStored(this.loadTask(id),k); this.sql.exec("update tasks set limits=? where id=?",JSON.stringify({ ...lim,_sig: signature }),id); }
+      }
       const t = this.loadTask(id);
       // what the dispatcher can expect (R10/R13): a signed task to a runner that auto-runs signatures from this sender's key may not ask
       // anyone (the runner decides when it checks the signature); a runner whose approval push is failing parks the task for /start
       let appr: any = !!needsApproval, apprNote: string | null = null, downNote: string | null = null;
       if (needsApproval) { const ad = await this.runnerAd(tgt.name);
-        if (sig && ad?.approve === "auto" && ad.signing?.auto_requires_signature === true && (ad.signing.trusted_signers ?? []).includes(peer.name)) { appr = "maybe_auto"; apprNote = `auto-runs if the signature checks (${tgt.name} trusts ${peer.name}'s signing key); otherwise ${tgt.name} asks its owner`; }
+        if (sr && t.limits?._sig) { appr = "maybe_auto"; apprNote = "runs within your saved session limits if the runner verifies the signature and source project; otherwise asks you"; }
+        if (!sr && sig && ad?.approve === "auto" && ad.signing?.auto_requires_signature === true && (ad.signing.trusted_signers ?? []).includes(peer.name)) { appr = "maybe_auto"; apprNote = `auto-runs if the signature checks (${tgt.name} trusts ${peer.name}'s signing key); otherwise ${tgt.name} asks its owner`; }
         if (standing && autoRun) { appr = "maybe_auto"; apprNote = `runs right away: the owner turned on "Run tasks without asking"${standing.until ? ` (until ${new Date(Number(standing.until)).toISOString().slice(0, 16).replace("T", " ")} UTC)` : ""}, so tasks from their own apps don't ask (${tgt.name} checks the owner's signature first; it pushes only the task's own branch by itself, never the main branch)`; }
         else if (standing) { appr = "maybe_auto"; apprNote = `runs on its own: the owner lets ${peer.name} run tasks in ${a.project} without asking${standing.until ? ` until ${new Date(Number(standing.until)).toISOString().slice(0, 10)}` : ""} (${tgt.name} checks the owner's signature first; pushing ${standing.push ? "is allowed too" : "still asks"})`; }
         if (ad?.approval?.ok === false && appr !== "maybe_auto") downNote = `${tgt.name} can't reach its owner for approvals right now (${String(ad.approval.error ?? "unknown").slice(0, 200)}): the task waits in awaiting_approval and the owner can approve it from /start (Status); nothing is declined`; }

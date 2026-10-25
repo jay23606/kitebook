@@ -160,3 +160,68 @@ test("runner withholds metadata if the signed session grant ends before delivery
     await RS.onRequest("fixture-grant-ended"); expect(checks).toBe(2); expect(reply.ok).toBe(false); expect(reply.error).toMatch(/session access ended/); expect(reply.result).toBeUndefined();
   } finally { globalThis.fetch = fetch0; C.setCfg(prior); RS.hooks.allowed = allowed; }
 });
+
+
+test("scoped session consent uses the actual source project and requires a fresh explicit approval outside it", async () => {
+  const C = await import("./runner-ctx.ts"), RS = await import("./runner-sessions.ts");
+  const prior = C.cfg, hook = RS.hooks.allowed;
+  const identity = {peer:"p_hark",epoch:"e1",connected:true};
+  let entry: any = {tasks:"ask",projects:[],sessions:"off",session_rule:{v:1,peer:"p_hark",epoch:"e1",access:"fork",approval:"auto",projects:["allowed"],keys:["ed25519:"+"A".repeat(43)]}};
+  try {
+    C.setCfg({projects:{allowed:{path:"/r"},private:{path:"/private-project"}}});
+    RS.hooks.allowed=async()=>({level:"write",entry,identity}); utimesSync(PI,OLD/1000,OLD/1000);
+    const task={id:"t_scoped",from:"hark",project:"allowed",agent:"pi",instructions:"continue",session:{mode:"fork",agent:"pi",from:"pi1"}};
+    expect(await RS.taskConsent(task)).toMatchObject({automatic:true,ask:false});
+    const wrongDestination={...task,project:"private"}; expect(await RS.taskConsent(wrongDestination)).toMatchObject({automatic:false,ask:true});
+    expect((await RS.sessionPrep(wrongDestination)).error).toContain("fresh owner approval");
+    expect(await RS.markManual(wrongDestination)).toBe(true);
+    expect((await RS.sessionPrep(wrongDestination)).preamble).toContain("hello from the owner");
+    const outside=put(join(H,".pi/agent/sessions/--private--/b_private1.jsonl"),JSON.stringify({type:"session",id:"private1",cwd:"/private-project"})+"\n"+JSON.stringify({type:"message",message:{role:"user",content:"private project context"}})+"\n");
+    const spoof={...task,id:"t_spoof",session:{mode:"fork",agent:"pi",from:"private1"}};
+    expect(await RS.taskConsent(spoof)).toMatchObject({automatic:false,ask:true});
+    expect((await RS.sessionPrep(spoof)).error).toContain("fresh owner approval");
+    entry={...entry,session_rule:{...entry.session_rule,approval:"ask"}};
+    expect((await RS.sessionPrep(task)).error).toContain("fresh owner approval");
+    await RS.markManual(task); expect((await RS.sessionPrep(task)).preamble).toContain("hello from the owner");
+    entry={...entry,session_rule:{...entry.session_rule,projects:["private"]}};
+    expect((await RS.sessionPrep(task)).error).toContain("fresh owner approval");
+    rmSync(outside);
+  } finally {C.setCfg(prior);RS.hooks.allowed=hook;}
+});
+
+test("scoped reads filter before snippets are read and withhold out-of-scope session content",async()=>{
+  const C=await import("./runner-ctx.ts"),RS=await import("./runner-sessions.ts"),prior=C.cfg,hook=RS.hooks.allowed,fetch0=globalThis.fetch;
+  const entry={sessions:"off",session_rule:{v:1,peer:"p_hark",epoch:"e1",projects:["allowed"],access:"read",approval:"auto",keys:[]}},identity={peer:"p_hark",epoch:"e1",connected:true};
+  const outsider=put(join(H,".pi/agent/sessions/--outside--/outside_private2.jsonl"),JSON.stringify({type:"session",id:"private2",cwd:"/private-project"})+"\n"+JSON.stringify({type:"message",message:{role:"user",content:"MUST_NOT_LEAK"}})+"\n");
+  let request:any={op:"search",from:"hark",args:{agent:"pi",query:"",limit:50}},reply:any;
+  try {
+    C.setCfg({url:"http://fixture.invalid",space:"main",projects:{allowed:{path:"/r"},private:{path:"/private-project"}}});RS.hooks.allowed=async()=>({level:"read",entry,identity});
+    globalThis.fetch=(async(url:any,init:any)=>{if(String(url).endsWith("/sessions_take"))return Response.json({ok:true,result:request});reply=JSON.parse(init.body);return Response.json({ok:true,result:{ok:true}});}) as typeof fetch;
+    await RS.onRequest("scoped-read-search");expect(reply.ok).toBe(true);expect(reply.result.sessions.every((x:any)=>x.cwd==="/r")).toBe(true);expect(JSON.stringify(reply)).not.toContain("MUST_NOT_LEAK");
+    request={op:"get",from:"hark",args:{agent:"pi",id:"private2"}};await RS.onRequest("scoped-read-direct");expect(reply.ok).toBe(false);expect(reply.error).toContain("outside the projects");expect(reply.result).toBeUndefined();
+  }finally{globalThis.fetch=fetch0;C.setCfg(prior);RS.hooks.allowed=hook;rmSync(outsider);}
+});
+
+test("saved idle-original permission automatically uses a copy when the source is running or uncertain",async()=>{
+  const C=await import("./runner-ctx.ts"),RS=await import("./runner-sessions.ts"),prior=C.cfg,hook=RS.hooks.allowed;
+  const entry={sessions:"off",session_rule:{v:1,peer:"p_hark",epoch:"e1",projects:["allowed"],access:"idle",approval:"auto",keys:["ed25519:"+"A".repeat(43)]}},identity={peer:"p_hark",epoch:"e1",connected:true};
+  try{C.setCfg({projects:{allowed:{path:"/r"}}});RS.hooks.allowed=async()=>({level:"write",entry,identity});utimesSync(PI,Date.now()/1000,Date.now()/1000);
+    const before=readFileSync(PI,"utf8"),task={id:"t_running_copy",from:"hark",project:"allowed",agent:"pi",session:{mode:"continue",agent:"pi",from:"pi1"}};
+    expect(await RS.taskConsent(task)).toMatchObject({automatic:true,ask:false});const run=await RS.sessionPrep(task);expect(run.resume).toBeUndefined();expect(run.preamble).toContain("hello from the owner");expect(run.note).toContain("running");expect(readFileSync(PI,"utf8")).toBe(before);
+  }finally{C.setCfg(prior);RS.hooks.allowed=hook;utimesSync(PI,OLD/1000,OLD/1000);}
+});
+
+test("scoped new work can use a project's default agent without claiming to read an unsupported transcript", async () => {
+ const C=await import("./runner-ctx.ts"),RS=await import("./runner-sessions.ts");C.cfg.projects={demo:{path:"/r"}};
+ const rule={v:1,peer:"p_app",epoch:"",projects:["demo"],access:"fork",approval:"auto",keys:["ed25519:"+"A".repeat(43)]};
+ RS.hooks.allowed=async()=>({level:"write",entry:{sessions:"off",session_rule:rule},identity:{peer:"p_app",epoch:"",connected:true}} as any);
+ expect(await RS.sessionPrep({id:"t_newdefault",from:"hark",project:"demo",session:{mode:"new"}})).toEqual({});
+ expect((await RS.sessionPrep({id:"t_badstore",from:"hark",project:"demo",session:{mode:"fork",agent:"unsupported",from:"id"}})).error).toBeDefined();
+});
+
+test("legacy read grants retain the missing-session response without reading a transcript",async()=>{
+ const C=await import("./runner-ctx.ts"),RS=await import("./runner-sessions.ts"),prior=C.cfg,hook=RS.hooks.allowed,fetch0=globalThis.fetch;let reply:any;
+ try{C.setCfg({url:"http://fixture.invalid",space:"main"});RS.hooks.allowed=async()=>({level:"read"});globalThis.fetch=(async(url:any,init:any)=>{if(String(url).endsWith("/sessions_take"))return Response.json({ok:true,result:{op:"get",from:"hark",args:{agent:"pi",id:"missing"}}});reply=JSON.parse(init.body);return Response.json({ok:true,result:{}});}) as typeof fetch;
+ await RS.onRequest("legacy-missing");expect(reply.ok).toBe(false);expect(reply.error).toContain("no pi session missing");expect(reply.result).toBeUndefined();
+ }finally{globalThis.fetch=fetch0;C.setCfg(prior);RS.hooks.allowed=hook;}
+});

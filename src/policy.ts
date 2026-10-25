@@ -1,3 +1,4 @@
+import { sessionRuleError } from "../client/session-policy.ts";
 // The owner's standing permissions, kitebook side (the Permissions panel on /start, the consent page, the review page's "Always allow").
 // The policy itself is signed in the owner's browser (P-256, WebCrypto, never extractable; client/payload.ts says what it holds), and
 // the runner acts only on a policy signed by a key it pinned (client/policy.ts). The server keeps the latest one per workspace plus an
@@ -28,6 +29,7 @@ export async function checkEnvelope(env: any, keys: string[], space: string): Pr
     if (!Array.isArray(e.projects ?? []) || (e.projects ?? []).some((x: any) => typeof x !== "string" || x.length > 64)) return `app ${app}: projects is a list of names`;
     if (e.until != null && !Number.isFinite(Number(e.until))) return `app ${app}: until is a time in ms or null`;
     if ((e.keys ?? []).some((k: any) => !APP_KEY_RE.test(String(k)))) return `app ${app}: keys are ed25519 public keys`;
+    if (e.session_rule !== undefined) { const why = sessionRuleError(e.session_rule); if (why) return `app ${app}: ${why}`; if (e.sessions !== "off") return `app ${app}: scoped rules require legacy sessions off (older runners fail closed)`; }
     if (e.sessions != null && !["off", "read", "write"].includes(e.sessions)) return `app ${app}: sessions must be off | read | write`; // live-sessions: the owner's local agent sessions
   }
   if (p.dev != null && p.autorun != null) return "autorun replaces dev (the old name): send one of them";
