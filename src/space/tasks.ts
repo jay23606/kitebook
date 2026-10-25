@@ -1,5 +1,6 @@
 // Space DO: task state machine, leases and held-time cap, results, live status, dispatch-time checks, chains, context packs, kill switch.
 // One layer of the Space class chain (core -> gc -> events -> files -> tasks -> Space in src/space.ts); split for size only, no behavior lives in the chain itself.
+import { RESOURCE, failureDecision, type FailureState } from "../../client/resource-guard.ts";
 import { sha256, RelayError, type Peer } from "../ops.ts";
 import { chainStepText, normStep } from "../../client/chain.ts";
 import { buildHeadline, weekLine } from "../../client/headline.ts";
@@ -30,7 +31,7 @@ export class SpaceTasks extends SpaceFiles {
     t.steers = t.steers ?? []; // live steering notes (task_steer): {n, by, message, at, delivered_at}
     const ev = this.sql.exec("select data from events where task_id=? and type like 'task.%' and type not in ('task.steered','task.steer_delivered') order by seq desc limit 1", id).toArray()[0] as any;
     if (ev) try { const d = JSON.parse(ev.data); note = d.note ?? d.reason ?? null; } catch {}
-    return { ...t, note, space_id: this.spaceId, from: nm(t.from_peer), target: nm(t.target_peer), needs_approval: !!t.needs_approval };
+    return { ...t, approval_retry: this.resourceState("approval", id), note, space_id: this.spaceId, from: nm(t.from_peer), target: nm(t.target_peer), needs_approval: !!t.needs_approval };
   }
   taskFor(peer: Peer, id: string, role: "any" | "from" | "target") {
     const t = this.loadTask(id);
@@ -62,6 +63,10 @@ export class SpaceTasks extends SpaceFiles {
   }
   heldSec(t: any): number { return Number(t.held_acc ?? 0) + (t.held_since ? Math.max(0, (Date.now() - Date.parse(t.held_since)) / 1000) : 0); }
   heldDeadline(t: any): number { const cap = this.heldCapSec(t); return cap === Infinity || !t.held_since ? Infinity : Date.parse(t.held_since) + (cap - Number(t.held_acc ?? 0)) * 1000; }
+  pauseApproval(t: any, state: FailureState) {
+    const summary = `Waiting for owner: approval delivery paused after ${state.failures} failures or one hour without approval. Fix the approval channel, then Retry this task. Nothing was declined. This approval failure did not start a coding agent.`;
+    this.setState(t, "failed", RELAY, { note: summary, reason: "approval_retry_paused" }, { summary, reason: "approval_retry_paused", approval_paused: true, retryable: false });
+  }
   // Retryable failures (lease expired, runner crashed) go back to the queue up to max_retries times (task_create, default 1)
   // instead of waiting for someone to re-dispatch. attempt / max_retries / attempts[] (history) are on task_get.
   failOrRetry(t: any, actor: Peer, why: { summary: string; reason: string }, result: any, from: string[]) {
@@ -756,6 +761,10 @@ export function taskOps(this: Space): Record<string, Op> {
     },
     task_claim: async (peer, a) => {
       const t = this.taskFor(peer, a.id, "target"); if (t.state !== "queued") throw new RelayError(409, `task is ${t.state}`);
+      this.requireResources();
+      const state = this.resourceState("approval", t.id), gate = failureDecision(state, RESOURCE.approval);
+      if (gate.paused) { this.pauseApproval(t, state!); throw new RelayError(423, "approval retries paused; owner Retry required"); }
+      if (gate.waitMs > 0) throw new RelayError(429, `approval retry cooldown: wait ${Math.ceil(gate.waitMs / 1000)}s`);
       this.setState(t, t.needs_approval ? "awaiting_approval" : "claimed", peer);
       const context = await this.projectContext(t.project); // the claimer gets its project's context pack (and nothing else under context/)
       return { ...this.loadTask(t.id), ...(context ? { context } : {}) };
@@ -791,9 +800,14 @@ export function taskOps(this: Space): Record<string, Op> {
     // untouched with the runner's note ("approval channel unreachable: <cause>; run doctor") and the runner retries with backoff.
     task_release: async (peer, a) => {
       if (peer.kind !== "runner") throw new RelayError(403, "only a runner releases a task it claimed");
-      const t = this.taskFor(peer, a.id, "target");
-      this.setState(t, "queued", peer, { note: redact(String(a.note ?? "released by the runner")).slice(0, 2000), reason: String(a.reason ?? "approval_unreachable").slice(0, 64), ...(a.retry_in_s != null ? { retry_in_s: Number(a.retry_in_s) || 0 } : {}) }, undefined, ["claimed", "awaiting_approval"]);
-      return { id: t.id, state: "queued" };
+      return this.ctx.storage.transactionSync(() => {
+        const t = this.taskFor(peer, a.id, "target");
+        if (!["claimed", "awaiting_approval"].includes(t.state)) throw new RelayError(409, `task is ${t.state}`);
+        const state = this.resourceFailure("approval", t.id, "approval channel unavailable");
+        if (state.paused) this.pauseApproval(t, state);
+        else this.setState(t, "queued", peer, { note: redact(String(a.note ?? "approval channel unavailable")).slice(0, 2000), reason: "approval_unreachable", retry_in_s: Math.ceil((state.nextAt - Date.now()) / 1000) });
+        return { id: t.id, state: state.paused ? "failed" : "queued", paused: state.paused, retry_in_s: state.paused ? 0 : Math.ceil((state.nextAt - Date.now()) / 1000), approval_retry: state };
+      });
     },
     task_progress: async (peer, a) => {
       const t = this.taskFor(peer, a.id, "target");

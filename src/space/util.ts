@@ -5,7 +5,7 @@ import { type EvType } from "../events.ts";
 import * as KB from "../kb.ts";
 
 export type Member = { peer_id: string; name: string; kind: string; verbs: string[]; paths: string[]; webhook: string | null; revoked: number };
-export type EvStream = { key: number; peer: Peer; t: EvType; args: any; last: number; closed: boolean; timer: any; ttl?: any; send: (method: string, params: any) => void; finish: (reason?: string) => void };
+export type EvStream = { key: number; peer: Peer; t: EvType; args: any; last: number; closed: boolean; timer: any; ttl?: any; send: (method: string, params: any) => void; finish: (reason?: string) => void; abort: () => void };
 export async function ctEqual(a: string, b: string) { // constant-time compare over equal-length digests
   const x = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(a))), y = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(b)));
   let d = 0; for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i]; return d === 0;

@@ -27,6 +27,7 @@
 //                                       and how long an unreferenced blob waits before blob GC deletes it (default 86400, BLOB_GC_GRACE_SEC); "-" skips a field
 //   bun admin.ts gc <space> [grace_sec]   -> blob GC now: mark unreferenced blobs, delete the ones past the grace (0 = now); shows bytes freed (also in usage)
 //   bun admin.ts gc_store [delete] [grace_sec]  -> operator only: audit the shared blob store for objects no space references; delete removes them
+//   bun admin.ts resources [space|-] [status|pause|resume] -> inspect failure budgets or pause/resume background work (no space = this account)
 //   bun admin.ts ratelimit <space> [per_min] [peer]  -> show/set requests per minute per token (default 600, RATE_PER_MIN env; 0 = no limit)
 //   bun admin.ts prune <space> [older_than_sec]  -> run retention now (finished tasks + their files/events, old events, orphan blobs)
 //   bun admin.ts title <display name...>             -> your account's MCP connector title (no name = back to the kitebook default, "Kitebook")
@@ -71,6 +72,7 @@ const body: Record<string, any> = {
   space: { id: a[0], name: a[1] }, peer: { name: a[0], kind: a[1], webhook: a[2] },
   grant: { peer: a[0], space: a[1], verbs: a[2]?.split(","), paths: a.slice(3) },
   invite: { space: a[0], kind: a[1], verbs: a[2]?.split(","), paths: a.slice(3) },
+  resources: { space: a[0] === "-" ? undefined : a[0], action: a[1] ?? "status" },
   retention: { space: a[0], days: a[1] === "-" ? undefined : a[1], events_max: a[2], repos_history: a[3], gc_grace_sec: a[4] },
   gc: { space: a[0], grace_sec: a[1] }, gc_store: { delete: a[0] === "delete", grace_sec: a[0] === "delete" ? a[1] : a[0] }, ratelimit: { space: a[0], per_min: a[1] === "-" ? undefined : a[1], peer: a[2] }, prune: { space: a[0], older_than_sec: a[1] },
   pause: { space: a[0], peer: a[1] === "-" ? undefined : a[1], reason: a.slice(2).join(" ") || undefined }, resume: { space: a[0], peer: a[1] }, stuck: { space: a[0], minutes: a[1] },
@@ -80,7 +82,7 @@ const body: Record<string, any> = {
   quota: { account: a[0], ...Object.fromEntries(a.slice(1).map(kv => kv.split("=")).map(([k, v]) => [k, v === "-" ? null : Number(v)])) }, revoke: { peer: a[0] }, rotate: { peer: a[0] }, rotate_admin: {}, list: {}, export: { space: a[0] },
   import: cmd === "import" ? { space: a[0], dump: JSON.parse(await Bun.file(a[1]).text()) } : {},
 };
-if (!(cmd in body)) { console.log("usage: ingress [on|off|auto] | space | peer | invite | grant | revoke | rotate | list | grants | revoke_grant | status | usage | audit | users | quota | export | import | retention | ratelimit | prune | gc | gc_store | pause | resume | stuck | title | policy | policy_set | owner_key | app_key"); process.exit(2); }
+if (!(cmd in body)) { console.log("usage: ingress [on|off|auto] | space | peer | invite | grant | revoke | rotate | list | grants | revoke_grant | status | usage | audit | users | quota | export | import | resources | retention | ratelimit | prune | gc | gc_store | pause | resume | stuck | title | policy | policy_set | owner_key | app_key"); process.exit(2); }
 const r = await post(`/admin/${cmd}`, body[cmd], T);
 const j: any = await r.json();
 if (!j.ok) { console.error(j.error); process.exit(1); }

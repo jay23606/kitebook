@@ -80,6 +80,14 @@ try {
   check(!(await request("/v1/task_approval", { id: task.id, decision: "approved" }, bearer(active))).ok, "assistant cannot approve its own work");
   await stopServer(); await startServer();
   check((await call(active, "read", { path: "shared/release.txt" })).content === "shared fixture context" && (await call(runner, "task_get", { id: task.id })).state === "awaiting_approval", "server restart retains context, credentials and pending approval");
+  await api("/admin/resources", { action: "pause" }, bearer(admin)); await stopServer(); await startServer();
+  const waiting = await call(active, "task_create", { target: "fixture-runner", title: "Paused fixture", instructions: "No real agent runs" });
+  await api("/admin/space", { id: "paused-fixture" }, bearer(admin));
+  const pausedStatus = await api("/admin/resources", { action: "status" }, bearer(admin));
+  check(pausedStatus.result.spaces.every((s: any) => s.paused) && (await request("/admin/resources", { action: "resume" }, bearer(active))).status === 401 && (await request("/v1/task_claim", { id: waiting.id }, bearer(runner))).status === 423, "resource pause survives restart and blocks new background work");
+  await api("/admin/resources", { action: "resume" }, bearer(admin));
+  const resourceAudit = (await api("/admin/audit", { limit: 20 }, bearer(admin))).result.entries;
+  check(resourceAudit.some((e: any) => e.action === "resources.pause") && resourceAudit.some((e: any) => e.action === "resources.resume") && !resourceAudit.some((e: any) => e.action === "resources.status") && (await call(runner, "task_claim", { id: waiting.id })).state === "awaiting_approval", "owner resource controls are audited and approval is still required");
   await api("/start", { op: "revoke", peer: identity.name }, owner());
   check((await request("/v1/whoami", {}, bearer(active))).status === 401 && (await call(runner, "task_get", { id: task.id })).state === "cancelled", "disconnect revokes cached credentials and cancels pending work");
   const deniedRefresh = await fetch(base + "/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: renewed.refresh_token }) });

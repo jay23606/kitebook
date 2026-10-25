@@ -36,6 +36,8 @@ export default defineConfig({
 			// Durable webhook outbox: first retry after OUTBOX_BASE_MS, doubling (jittered, capped 10 min), dropped after OUTBOX_MAX_ATTEMPTS tries.
 			OUTBOX_BASE_MS: bindings.text(EVENTS_TEST ? "1000" : "2000"),
 			OUTBOX_MAX_ATTEMPTS: bindings.text("8"),
+			// Emergency stop for server-owned background work; incoming HTTP traffic is still metered.
+			RESOURCE_GUARD_PAUSED: bindings.text(E("KITEBOOK_RESOURCE_GUARD_PAUSED") === "1" ? "1" : "0"),
 			// Hosted mode: a public Kitebook strangers sign up on (KITEBOOK_HOSTED=1 at deploy). It opens dynamic client registration to every
 			// client (unless KITEBOOK_OAUTH_DCR=0) and sets the hosted default quotas below. A self-hosted Kitebook leaves it off.
 			HOSTED: bindings.text(E("KITEBOOK_HOSTED") === "1" ? "1" : "0"),

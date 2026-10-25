@@ -7,6 +7,7 @@
 // (The selector isn't called BLOBS because that name is already the R2 binding.)
 // Every backend uses the same object names (blobs/<sha256> on R2/S3, <sha256> under the disk root), so moving
 // blobs between backends is a plain copy, and reads re-hash the bytes so a torn or tampered object is caught, not served.
+import { RESOURCE, resourceIO, resourceBytes } from "../client/resource-guard.ts";
 import { AwsClient } from "aws4fetch";
 
 export const INLINE_MAX = 1_500_000;  // DO SQLite value cap is 2 MB
@@ -58,19 +59,26 @@ function raw(kind: BlobKind, env: any): Raw {
       async refs(sha) { return (await dirList(d, `refs/${sha}`)).length; }, // a directory GET lists it as JSON [{name, type}]
       async list() { return { items: (await dirList(d, "")).filter(e => e.type === "file" && SHA.test(e.name)).map(e => ({ sha: e.name })) }; } };
   }
-  const aws = new AwsClient({ accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY, service: "s3", region: env.S3_REGION ?? "auto" });
+  const aws = new AwsClient({ accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY, service: "s3", retries: 0, region: env.S3_REGION ?? "auto" });
   const base = `${String(env.S3_ENDPOINT).replace(/\/$/, "")}/${env.S3_BUCKET}`, url = (sha: string) => `${base}/blobs/${sha}`;
-  const s3List = async (prefix: string, max: number, token?: string) => { // ListObjectsV2 (path-style); just the fields GC needs
-    const r = await aws.fetch(`${base}?list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=${max}${token ? `&continuation-token=${encodeURIComponent(token)}` : ""}`); if (!r.ok) throw new Error(`s3 list ${r.status}`);
-    const x = await r.text(), tag = (b: string, t: string) => b.match(new RegExp(`<${t}>([^<]*)</${t}>`))?.[1];
+  const request = (path: string, init: RequestInit = {}, read = false, missing = false) => resourceIO(async signal => {
+    const r = await aws.fetch(path, { ...init, signal });
+    if (r.status === 404 && missing) { await r.body?.cancel(); return null; }
+    if (!r.ok) { await r.body?.cancel(); throw new Error(`s3 request HTTP ${r.status}`); }
+    if (read) return resourceBytes(r, EXTERNAL_MAX);
+    await r.body?.cancel(); return new Uint8Array();
+  }, RESOURCE.storageMs);
+  const s3List = async (prefix: string, max: number, token?: string) => {
+    const bytes = await request(`${base}?list-type=2&prefix=${encodeURIComponent(prefix)}&max-keys=${max}${token ? `&continuation-token=${encodeURIComponent(token)}` : ""}`, {}, true);
+    const x = new TextDecoder().decode(bytes!), tag = (b: string, t: string) => b.match(new RegExp(`<${t}>([^<]*)</${t}>`))?.[1];
     const items = [...x.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map(m => ({ key: tag(m[1], "Key") ?? "", size: Number(tag(m[1], "Size") ?? 0), uploaded: Date.parse(tag(m[1], "LastModified") ?? "") || undefined }));
     return { items, cursor: tag(x, "IsTruncated") === "true" ? tag(x, "NextContinuationToken") : undefined };
   };
-  return { async put(sha, body) { const r = await aws.fetch(url(sha), { method: "PUT", body }); if (!r.ok) throw new Error(`s3 put ${r.status}`); },
-    async get(sha) { const r = await aws.fetch(url(sha)); if (r.status === 404) return null; if (!r.ok) throw new Error(`s3 get ${r.status}`); return new Uint8Array(await r.arrayBuffer()); },
-    async del(sha) { const r = await aws.fetch(url(sha), { method: "DELETE" }); if (!r.ok && r.status !== 404) throw new Error(`s3 delete ${r.status}`); },
-    async ref(sha, key) { const r = await aws.fetch(`${base}/refs/${sha}/${key}`, { method: "PUT", body: "" }); if (!r.ok) throw new Error(`s3 ref ${r.status}`); },
-    async unref(sha, key) { const r = await aws.fetch(`${base}/refs/${sha}/${key}`, { method: "DELETE" }); if (!r.ok && r.status !== 404) throw new Error(`s3 unref ${r.status}`); },
+  return { async put(sha, body) { await request(url(sha), { method: "PUT", body }); },
+    async get(sha) { return request(url(sha), {}, true, true); },
+    async del(sha) { await request(url(sha), { method: "DELETE" }, false, true); },
+    async ref(sha, key) { await request(`${base}/refs/${sha}/${key}`, { method: "PUT", body: "" }); },
+    async unref(sha, key) { await request(`${base}/refs/${sha}/${key}`, { method: "DELETE" }, false, true); },
     async refs(sha) { return (await s3List(`refs/${sha}/`, 10)).items.length; },
     async list(cursor) { const r = await s3List("blobs/", 1000, cursor); return { items: r.items.map(i => ({ ...i, sha: i.key.slice(6) })), cursor: r.cursor }; } };
 }

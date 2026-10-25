@@ -1,5 +1,7 @@
 // Space DO: retention (finished tasks, events, repos/ history) and blob GC (mark-and-sweep from the alarm).
 // One layer of the Space class chain (core -> gc -> events -> files -> tasks -> Space in src/space.ts); split for size only, no behavior lives in the chain itself.
+import { RESOURCE, failedResource, failureDecision } from "../../client/resource-guard.ts";
+import { RelayError } from "../ops.ts";
 import { ACTIVE } from "./util.ts";
 import { SpaceCore } from "./core.ts";
 
@@ -57,6 +59,7 @@ export class SpaceGc extends SpaceCore {
     let events = 0, repos = 0;
     this.ctx.storage.transactionSync(() => { // one sync step: a commit can't interleave between unlinking files and the GC mark below
       for (const id of ids) {
+        this.sql.exec("delete from meta where k=?", `resource:approval:${id}`);
         for (const tb of ["tasks:id", "task_live:task_id", "events:task_id", "task_notes:task_id"]) { const [n, c] = tb.split(":"); this.sql.exec(`delete from ${n} where ${c}=?`, id); }
         this.sql.exec("delete from changes where path like ?", `tasks/${id}/%`); this.sql.exec("delete from tree where path like ?", `tasks/${id}/%`);
       }
@@ -100,15 +103,25 @@ export class SpaceGc extends SpaceCore {
     try { await this.store!.ref(sha, this.refKey); await this.store!.put(sha, bytes); }
     finally { const n = (this.putting.get(sha) ?? 1) - 1; if (n) this.putting.set(sha, n); else this.putting.delete(sha); }
   }
-  async backfillRefs() {
-    for (const r of this.sql.exec("select sha from blobs where loc != 'inline'").toArray() as any[]) await this.store!.ref(r.sha, this.refKey);
-    this.sql.exec("insert or replace into meta values('blob_refs','1')");
+  refsPending?: Promise<void>;
+  backfillRefs(): Promise<void> {
+    return this.refsPending ??= this.backfillRefsWork().finally(() => { this.refsPending = undefined; });
   }
+  async backfillRefsWork() {
+    this.requireResources();
+    const gate = failureDecision(this.resourceState("refs"), RESOURCE.refs);
+    if (gate.paused || gate.waitMs > 0) throw new RelayError(423, "blob reference backfill paused or cooling down; inspect resources");
+    try {
+      for (const r of this.sql.exec("select sha from blobs where loc != 'inline'").toArray() as any[]) { this.requireResources(); await this.store!.ref(r.sha, this.refKey); }
+      this.sql.exec("insert or replace into meta values('blob_refs','1')"); this.sql.exec("delete from meta where k='resource:refs:'");
+    } catch (error) { if (!this.resourcesPaused()) this.resourceFailure("refs", "", "blob reference backfill failed"); throw error; }
+  }
+
   gcDue(): number { // when the alarm next has GC work: a dirty mark (repos trim) or the first marked/pending blob's grace end
     const g = this.gcGraceMs(), d = this.sql.exec("select v from meta where k='gc_dirty'").toArray()[0]?.v;
     const m = this.sql.exec("select min(marked) m from blob_gc").one().m as number | null, p = this.sql.exec("select min(at) m from blob_put").one().m as number | null;
     const failures = Number(this.sql.exec("select v from meta where k='gc_failures'").toArray()[0]?.v ?? 0);
-    if (failures >= 8) return Infinity; // storage needs operator attention; do not wake/bill forever
+    if (failures >= RESOURCE.gc.maxFailures) return Infinity; // storage needs operator attention; do not wake/bill forever
     const retry = Number(this.sql.exec("select v from meta where k='gc_retry_at'").toArray()[0]?.v ?? 0);
     return Math.max(retry, Math.min(d != null ? Number(d) + 60_000 : Infinity, m != null ? m + g : Infinity, p != null ? p + g : Infinity));
   }
@@ -117,7 +130,7 @@ export class SpaceGc extends SpaceCore {
     const p = this.sql.exec("select count(*) n, coalesce(sum(b.size),0) s from blob_gc g join blobs b on b.sha=g.sha").one() as any;
     return { freed_bytes: k("gc_freed_bytes"), freed_blobs: k("gc_freed_blobs"), marked_blobs: p.n as number, marked_bytes: p.s as number,
       pending_uploads: this.sql.exec("select count(*) n from blob_put").one().n as number, grace_sec: this.gcGraceMs() / 1000, repos_history: this.reposHistory(),
-      retry_failures: k("gc_failures"), retry_paused: k("gc_failures") >= 8, retry_at: k("gc_retry_at") && k("gc_failures") < 8 ? new Date(k("gc_retry_at")).toISOString() : null,
+      retry_failures: k("gc_failures"), retry_paused: k("gc_failures") >= RESOURCE.gc.maxFailures, retry_at: k("gc_retry_at") && k("gc_failures") < 8 ? new Date(k("gc_retry_at")).toISOString() : null,
       last_run: k("gc_last") ? new Date(k("gc_last")).toISOString() : null };
   }
   gcPending?: Promise<any>;
@@ -125,10 +138,11 @@ export class SpaceGc extends SpaceCore {
     return this.gcPending ??= this.collectBlobs(graceMs, retry).finally(() => { this.gcPending = undefined; });
   }
   async collectBlobs(graceMs: number, retry: boolean) {
+    if (this.resourcesPaused()) return { deferred: "background resources paused", marked: 0, swept: 0, freed_bytes: 0, external_deleted: 0 };
     if (retry) this.sql.exec("delete from meta where k in ('gc_failures','gc_retry_at')");
     const failures = Number(this.sql.exec("select v from meta where k='gc_failures'").toArray()[0]?.v ?? 0);
     const retryAt = Number(this.sql.exec("select v from meta where k='gc_retry_at'").toArray()[0]?.v ?? 0);
-    if (failures >= 8 || retryAt > Date.now()) return { deferred: failures >= 8 ? "storage failures: retry paused; operator gc resumes" : "storage retry cooldown", marked: 0, swept: 0, freed_bytes: 0, external_deleted: 0 };
+    if (failures >= RESOURCE.gc.maxFailures || retryAt > Date.now()) return { deferred: failures >= RESOURCE.gc.maxFailures ? "storage failures: retry paused; operator gc resumes" : "storage retry cooldown", marked: 0, swept: 0, freed_bytes: 0, external_deleted: 0 };
 
     if (this.exporting) { await this.armAlarm(Date.now() + 60_000); return { deferred: "export in progress", marked: 0, swept: 0, freed_bytes: 0, external_deleted: 0 }; }
     const t = Date.now(), due = t - graceMs, ext = new Set<string>(), orphan = new Map<string, number>(); let marked = 0, swept = 0, freed = 0;
@@ -149,6 +163,7 @@ export class SpaceGc extends SpaceCore {
     let deleted = 0, failed = false;
     const held = (sha: string) => this.putting.has(sha) || this.sql.exec("select 1 from blobs where sha=? union all select 1 from blob_put where sha=?", sha, sha).toArray().length > 0;
     for (const sha of ext) {
+      if (this.resourcesPaused()) { this.sql.exec("insert or replace into blob_put values(?,?,?)", sha, Date.now(), orphan.get(sha) ?? 0); continue; }
       if (!this.store || held(sha) || this.sweeping.has(sha)) continue;
       let done!: () => void; this.sweeping.set(sha, new Promise<void>(r => done = r));
       try {
@@ -158,7 +173,7 @@ export class SpaceGc extends SpaceCore {
       } catch (e) { failed = true; console.error("blob gc", sha, e); this.sql.exec("insert or replace into blob_put values(?,?,?)", sha, Date.now() - this.gcGraceMs() + 60_000, orphan.get(sha) ?? 0); } // persist a retry deadline >= 1 minute away, even with zero grace; timestamp + grace = deadline
       finally { this.sweeping.delete(sha); done(); }
     }
-    if (failed) this.sql.exec("insert or replace into meta values('gc_failures',?),('gc_retry_at',?)", String(failures + 1), String(Date.now() + Math.min(3600000, 60000 * 2 ** failures)));
+    if (failed) this.sql.exec("insert or replace into meta values('gc_failures',?),('gc_retry_at',?)", String(failures + 1), String(failedResource({ failures, firstAt: Date.now(), nextAt: 0, paused: false, reason: "" }, RESOURCE.gc, "storage unavailable").nextAt));
     else this.sql.exec("delete from meta where k in ('gc_failures','gc_retry_at')");
     const m = (k: string) => Number(this.sql.exec("select v from meta where k=?", k).toArray()[0]?.v ?? 0); // bytes freed: rows swept + orphan uploads deleted
     this.sql.exec("insert or replace into meta values('gc_freed_bytes',?),('gc_freed_blobs',?),('gc_last',?)", String(m("gc_freed_bytes") + freed), String(m("gc_freed_blobs") + swept), String(t));

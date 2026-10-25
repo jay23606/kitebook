@@ -2,6 +2,7 @@
 // Outbound local coding-agent runner; approvals and signed policy are checked on this machine.
 // Commands and configuration: docs/runner-reference.md (kept outside the served runner bundle).
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
+import { RESOURCE } from "./resource-guard.ts";
 import { intervalMs, singleFlight, reconnectDelay, publishChanged } from "./retry.ts";
 import { normAcct } from "./account.ts";
 import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, statSync, rmSync, symlinkSync, readdirSync } from "fs";
@@ -269,16 +270,24 @@ const cursorFile = join(homedir(), ".kitebook", `${me.name}.${cfg.space}.cursor`
 mkdirSync(join(homedir(), ".kitebook"), { recursive: true });
 let cursor = existsSync(cursorFile) ? Number(readFileSync(cursorFile, "utf8")) : 0;
 initApproval(); // nonces + approved payloads, named after this runner
-// Backoff for tasks released because nobody could be asked: 30s, 1m, 2m ... capped at 10 min (KITEBOOK_APPROVAL_RETRY_MS in tests).
-const downTries = new Map<string, number>(), retryAt = new Map<string, number>();
+// The server persists approval budgets and cooldowns. Local timers only wake an admitted retry.
+const downTries = new Map<string, number>(), retryAt = new Map<string, number>(), retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function retryApprovalAt(id: string, at: number) {
+  const previous = retryTimers.get(id); if (previous) clearTimeout(previous);
+  retryAt.set(id, at); retryTimers.set(id, setTimeout(() => { retryTimers.delete(id); if (!queue.includes(id)) queue.push(id); drain(); }, Math.max(1000, at - Date.now())));
+}
 async function holdForApproval(id: string, cause: string) {
-  const n = (downTries.get(id) ?? 0) + 1, ms = Math.min(10 * 60_000, (Number(process.env.KITEBOOK_TEST && process.env.KITEBOOK_APPROVAL_RETRY_MS) || 30_000) * 2 ** (n - 1)), s = Math.round(ms / 1000);
-  downTries.set(id, n); retryAt.set(id, Date.now() + ms); approvalHealth(cause);
-  log("approval channel unreachable:", cause, "- task", id, `stays queued, asking again in ${s}s (try ${n})`);
-  await call("task_release", { id, reason: "approval_unreachable", retry_in_s: s,
-    note: `approval channel unreachable: ${cause}; run doctor on ${me.name} (kitebook doctor --test-push). Nothing was declined: the task stays queued and ${me.name} asks again in ${s}s.` })
-    .catch((e: any) => log("release", id, e.message));
-  setTimeout(() => { if (!queue.includes(id)) queue.push(id); drain(); }, ms);
+  const n = (downTries.get(id) ?? 0) + 1; downTries.set(id, n); approvalHealth(cause);
+  // Set a local floor before the release emits task.queued back to us.
+  retryAt.set(id, Date.now() + RESOURCE.approval.baseMs);
+  let r: any; try { r = await call("task_release", { id, reason: "approval_unreachable", note: `Approval channel unavailable: ${cause}. Nothing was declined.` }); }
+  catch (e: any) { log("approval release", id, e.message); }
+  if (r?.paused || r?.state && r.state !== "queued" || !r && n >= RESOURCE.approval.maxFailures) {
+    downTries.delete(id); retryAt.delete(id); const timer = retryTimers.get(id); if (timer) clearTimeout(timer); retryTimers.delete(id);
+    log("approval retries paused; owner Retry required", id); return;
+  }
+  const at = Number(r?.approval_retry?.nextAt) || Date.now() + Math.min(RESOURCE.approval.capMs, RESOURCE.approval.baseMs * 2 ** (n - 1));
+  log("approval channel unavailable", id, `retry in ${Math.ceil((at - Date.now()) / 1000)}s`); retryApprovalAt(id, at);
 }
 const running = new Map<string, { kill: () => void; cancelled: boolean; timedOut: boolean }>();
 
@@ -819,7 +828,8 @@ async function finishScratch(t: any, run: Run, gx: G.Ctx, r: any) {
 
 async function handle(id: string) {
   let t = await call("task_get", { id });
-  if (t.state !== "queued") { downTries.delete(id); retryAt.delete(id); return; } // includes a task cancelled while it sat in our queue (or while we were offline)
+  if (t.state !== "queued") { downTries.delete(id); retryAt.delete(id); const timer = retryTimers.get(id); if (timer) clearTimeout(timer); retryTimers.delete(id); return; } // includes a task cancelled while it sat in our queue (or while we were offline)
+  if (t.approval_retry?.nextAt > Date.now()) { retryApprovalAt(id, t.approval_retry.nextAt); return; }
   if ((retryAt.get(id) ?? 0) > Date.now()) return; // released for an unreachable approval channel: its backoff timer brings it back
   // Not our project? Several machines can share one runner token, so leave it for the one that has it,
   // and only reject once it's been waiting a minute with nobody claiming it.
@@ -1317,7 +1327,7 @@ while (true) {
       if (ev.type === "task.running" && ev.data?.answer != null) resumeParked(ev.task); // the sender answered a parked task
       if (ev.type === "task.steered" && liveRuns.get(ev.task)?.busy) steerLive(ev.task); // a live session takes it mid-turn (approval rules as at a turn boundary)
       else if (ev.type === "task.steered" && inFlight.has(ev.task)) log("steer #" + (ev.data?.n ?? "?"), "for", ev.task, "from", ev.data?.by ?? ev.actor, ": the agent gets it when its current turn ends"); // pushed at once; taken at the turn boundary
-      if (ev.type === "task.failed" && ev.actor === "relay") onCancel(ev.task, "lease expired on the server"); // the server expired our lease while we were away
+      if (ev.type === "task.failed" && ev.actor === "relay") onCancel(ev.task, ev.data?.reason ?? "task stopped by the server"); // the server expired our lease while we were away
       if (ev.type === "task.retrying") onRequeued(ev.task, ev.data?.attempt);
       if (ev.type === "update.requested" || ev.type === "policy.updated") SS.poke(); // an agent's relay_update or a Settings change: look now
       if (ev.type === "sessions.requested" && ev.data?.target === me.name && typeof ev.data?.id === "string") RS.onRequest(ev.data.id).catch((e: any) => log("sessions request", e.message)); // an app reads the owner's sessions (checked against the signed policy)
