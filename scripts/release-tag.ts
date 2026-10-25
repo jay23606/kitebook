@@ -1,4 +1,5 @@
 // Calendar tags use UTC; signed numeric release counters still enforce update order.
+export const validReleaseVersion = (version: string) => /^(v\d+\.\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?|dev-[0-9A-Za-z.-]+)$/.test(version);
 export function releaseTag(date = new Date(), existing: Iterable<string> = []): string {
   if (!Number.isFinite(date.getTime())) throw new Error("invalid release date");
   const iso = date.toISOString();
