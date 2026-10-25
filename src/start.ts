@@ -20,6 +20,7 @@ import { owner, knobs, signupLimit, PRESETS } from "./oauth.ts";
 import { acctHint, deviceCookies, sessionOwner, sessionCookies, setHint, clearCookie, uaLabel, sameOrigin } from "./session.ts";
 import { authBase, PASSKEY_JS, mcpPath } from "./auth.ts";
 import { appPrompt } from "./named.ts";
+import { connectionPrompt, setupState } from "./onboarding.ts";
 import { RELEASE_KEY } from "../client/release-key.ts";
 import { OWNER_JS } from "./policy-ui.ts";
 import { LINK_RE } from "./login.ts";
@@ -360,19 +361,13 @@ export async function startFetch(req: Request, env: any, url: URL, h: H): Promis
   }
   return j({ ok: false, error: "op: signup | signin | signout | link_signin | login_ask | login_poll | passkey_login_begin | passkey_login | passkey_begin | passkey_add | passkey_remove | login_decide | recovery_new | devices | device_remove | mint | app_add | connect | app_expiry | autorun_key | autorun_set | experimental_set | ci_run | owner_cmd | status | revoke | nonce | act | policy | policy_set | owner_key | app_key | dev_key | dev_set | app_updates | connection | ingress | ingress_set | tunnel_act | brief | brief_set | presence_ask | presence_state | presence_password | presence_passkey_challenge | presence_passkey | remote_pw | remote_pw_set | machines | machine_approve | machine_revoke | machine_rename | machine_shortcut_off | machine_password_reset | joins | join_approve | join_deny" }, 400);
 }
-// The Get started checklist on /start ticks itself from real state: a runner online now, an assistant or coding agent that has
-// connected at least once, a task that finished successfully. all = the checklist shrinks to one line.
-export function setupState(st: any) {
-  const sp: any[] = st?.spaces ?? [], peers = sp.flatMap(x => x.peers ?? []);
-  const mac = peers.some(p => p.kind === "runner" && p.online), agent = peers.some(p => (p.kind === "assistant" || p.kind === "coding_agent") && !p.never_connected);
-  const task = sp.some(x => (x.done_tasks ?? 0) > 0 || (x.recent ?? []).some((t: any) => t.state === "succeeded"));
-  return { mac, agent, task, all: mac && agent && task };
-}
+// The Get started checklist follows actual app connections and published context; coding work is optional.
+export { setupState } from "./onboarding.ts";
 const b64 = (n: number) => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(n)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
 // ---------- the page ----------
-// Step 3 of Get started: a first task the newcomer pastes into their assistant (small, safe, and easy to check on the result)
-const SAMPLE = 'Use Kitebook to send my Mac a small coding task: in one of my projects, add a short "How to run it" section to the README. Tell me when it is done and what changed.';
+// A harmless first note, only written when the owner explicitly pastes this request.
+const SAMPLE = 'Save this harmless setup note in Kitebook: "My shared-workspace connection is ready." Read it back and tell me where it was saved. If your access is read-only, tell me instead of changing permissions.';
 // first sign-in in plain words: the one-step install (scripts/get.sh) already opened the browser signed in, and puts `kitebook open` on the Mac;
 // a Kitebook server deployed by hand (Advanced) signs in with its ADMIN_TOKEN as the recovery code
 const FIRST = (_o: string) => `On the Mac running Kitebook, open Terminal and type <code>${CLI} open</code>: it opens this page signed in. Set it up some other way (Cloudflare, by hand)? Paste the server's <code>ADMIN_TOKEN</code> (its recovery code) under <b>Use a recovery code</b>.`;
@@ -418,7 +413,7 @@ function startPage(s: { acct: string | null; hint: string | null; multi: boolean
   const app = (title: string, line: string, body: string) => `<div class="tile"><h3>${title}</h3><p class="note">${line}</p>${body}</div>`;
   // a Kitebook server on 127.0.0.1 / localhost with no tunnel up: coding agents on this computer reach it, cloud assistants can't
   const localOnly = s.local && !s.pub ? `<p class="warn localonly">This address only works on this computer, so cloud assistants can't reach it yet: turn on public access in Settings, or deploy it.</p>` : "";
-  const LEAD = `<p class="lead">Your assistants ask, your Mac's coding agents do the work, and nothing runs until you approve.</p>`;
+  const LEAD = `<p class="lead">Shared knowledge, files and handoffs for your daily assistants. Pick up your work across platforms.</p>`;
   const out = s.acct === null
     ? `<main class="out">
 ${s.open ? card("Create your account", `${LEAD}<label>Account name</label><input type="text" id="acct" autocomplete="username" placeholder="e.g. alice"><div class="bar"><button id="signup">Sign up</button></div>`) : ""}
@@ -433,17 +428,18 @@ ${card(s.open ? "Already have an account?" : s.fresh ? "Signed in before?" : "Si
 <div class="bar"><button id="cont">Continue</button></div></div></main>`
     : `${KNOWLEDGE_HTML}<main id="home" hidden><p id="nowline" class="nowline" role="status"></p><div id="devs"></div>
 <section id="setup" hidden><div id="steps"><ol class="steps">
-<li class="step cur" id="step-mac" aria-current="step"><p>Step 1 of 3 · Connect your Mac: run one line in Terminal. <span class="tag state">Now</span></p><div class="act">${mintBtn("runner", "Create install command", " main")}</div></li>
-<li class="step" id="step-agent"><p>Step 2 of 3 · Connect an assistant, like Claude.ai, ChatGPT, Hark or Claude Code. <span class="tag state">Next</span></p>${localOnly}<div class="act"><button id="pick" class="main">Choose an app</button></div></li>
-<li class="step" id="step-task"><p>Step 3 of 3 · Paste a first task into your assistant, then approve it here. <span class="tag state">Next</span></p><pre id="sample" hidden>${esc(SAMPLE)}</pre><div class="act"><button class="cp main" id="cp-sample" data-for="sample">Copy the request</button></div></li>
+<li class="step cur" id="step-agent" aria-current="step"><p>Step 1 of 2 · Give your daily assistant your Kitebook address, then approve its connection. <span class="tag state">Now</span></p>${localOnly}<div class="act"><button id="pick" class="main">Connect an assistant</button></div></li>
+<li class="step" id="step-shared"><p>Step 2 of 2 · Save a first shared note. Another assistant can read it and continue. <span class="tag state">Next</span></p><pre id="sample" hidden>${esc(SAMPLE)}</pre><div class="act"><button class="cp main" id="cp-sample" data-for="sample">Copy the request</button></div></li>
 </ol></div></section>
 <div class="workspace-grid"><div class="activity-column"><div id="stat" class="live"><p class="note">Loading…</p></div></div>
-<aside class="workspace-context" aria-label="Connected apps and computers"><div class="context-heading"><h2>Connected</h2><a href="/settings#apps">Manage</a></div><div id="peers"><p class="note">Loading…</p></div><div><p class="note">Your assistants send tasks. Your coding agents work on your computer.</p><a class="context-link" href="#more">Connect another app</a></div></aside></div>
+<aside class="workspace-context" aria-label="Connected apps and computers"><div class="context-heading"><h2>Connected</h2><a href="/settings#apps">Manage</a></div><div id="peers"><p class="note">Loading…</p></div><div><p class="note">Your daily assistants share context here. Coding agents are optional.</p><a class="context-link" href="#more">Connect another app</a></div></aside></div>
 <details id="more" class="fold"><summary><span>Connection options</span><span class="v" id="more-n"></span></summary>
 <p class="note">${isRoot(s.acct) ? "Signed in as the owner" : `Signed in to <b>${esc(s.acct)}</b>`} · <button class="link" id="showsteps">Show the setup steps</button></p>
 <h3>Connect another app</h3>${localOnly}<div class="connect-grid">
+${app("Hark, Muse and daily assistants", "Give your assistant this request. It configures its connection where supported; you approve access yourself.", localOnly ? `<a class="btn" href="/settings#connection">Set up public access</a>` : code("daily-connect", connectionPrompt(web)))}
 ${app("Claude.ai and ChatGPT", "Add a custom connector with this address, then approve it here once.", `${code("mcpurl", web + "/mcp")}${s.dcrMode === "off" ? `<p class="warn">Claude.ai and ChatGPT can't connect yet: this server doesn't let apps sign themselves up. Whoever runs it turns that on by removing <code>OAUTH_DCR=0</code>.</p>` : ""}`)}
-${app("Hark", "Give Hark a one-time invite link.", mintBtn("hark", "Create Hark invite link"))}
+${app("Invite link fallback", "If your assistant cannot start pairing, give it a one-time invite instead.", mintBtn("hark", "Create assistant invite link"))}
+${app("Coding runner (optional)", "Connect a computer only when you want assistants to request coding work.", mintBtn("runner", "Create install command"))}
 ${app("Claude Code", "Run this, then <code>/mcp</code> → Authenticate. No browser there? Create a key command.", `${code("cc-oauth", `claude mcp add --transport http kitebook ${s.origin}/mcp -s user`)}${mintBtn("claude-code", "Create Claude Code command")}`)}
 ${app("Codex", "Run this and approve in the browser it opens.", `${code("cx-oauth", `codex mcp add kitebook --url ${s.origin}/mcp && codex mcp login kitebook`)}${mintBtn("codex", "Create Codex command")}`)}
 ${app("Pi", "Run this, approve in the browser, then type <code>/reload</code> in Pi.", `${code("pi-oauth", `pi mcp add kitebook --url ${s.origin}/mcp && pi mcp login kitebook`)}${mintBtn("pi", "Create Pi command")}`)}
@@ -572,14 +568,13 @@ const x=el("p","",h.line+" ");if(h.next)x.append(el("strong","",h.next));out.pus
 function autorunBanner(spaces){const b=$("autorunbanner");if(!b)return;const on=(spaces||[]).filter(x=>x.autorun);b.hidden=!on.length;if(!on.length)return b.replaceChildren();
 const u=on.map(x=>x.autorun.until).filter(Boolean),t=el("span","","Running your apps' tasks without asking"+(u.length?" until "+new Date(Math.min(...u)).toLocaleString([],{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"")+".");
 const off=btn("Turn off","rv",async()=>{try{for(const x of on)await OWN.autorun(S.acct,x.space,false);msg("Tasks ask you again.");stat(true)}catch(e){msg(e.message)}});off.id="autorunoff";b.replaceChildren(t,document.createTextNode(" "),off)}
-// Get started: only the current step shows (one sentence, one button); the steps tick themselves from the status read (setup = {mac, agent,
-// task, all}). Once all three are done it disappears for good in this browser (a Mac that's asleep doesn't bring it back); More -> Show the setup steps.
-const SK="kitebook-setup-done:"+S.acct,NUM={mac:"1",agent:"2",task:"3"};
+// Get started follows a connected app and published context; no coding task or online runner is required.
+const SK="kitebook-setup-done:"+S.acct,NUM={agent:"1",shared:"2"};
 function setup(st){if(!$("setup")||!st)return;let cur=null;for(const k in NUM){const e=$("step-"+k),d=!!st[k];if(!d&&!cur)cur=k;e.classList.toggle("done",d);e.classList.toggle("cur",cur===k);
 if(cur===k)e.setAttribute("aria-current","step");else e.removeAttribute("aria-current");e.querySelector(".tag").textContent=d?"Done":cur===k?"Now":"Next"}
-let seen=false;try{seen=localStorage.getItem(SK)==="1";if(st.all&&!seen){localStorage.setItem(SK,"1");msg("You're set up. Your tasks show up here.")}}catch(e){}$("setup").hidden=!S.showSteps&&(st.all||seen||!cur)}
+let seen=false;try{seen=localStorage.getItem(SK)==="1";if(st.all&&!seen){localStorage.setItem(SK,"1");msg("You're set up. Your shared context is ready.")}}catch(e){}$("setup").hidden=!S.showSteps&&(st.all||seen||!cur)}
 if($("showsteps"))$("showsteps").onclick=()=>{S.showSteps=true;$("setup").hidden=false;$("more").open=false;scrollTo(0,0)};
-if($("pick"))$("pick").onclick=()=>{$("more").open=true;$("mcpurl").scrollIntoView({behavior:"smooth",block:"center"})};
+if($("pick"))$("pick").onclick=()=>{$("more").open=true;($("daily-connect")||$("more")).scrollIntoView({behavior:"smooth",block:"center"})};
 // sign-in requests waiting for this owner: one line each, Approve / Deny (actionable now, so on Home)
 async function devs(){const box=$("devs");if(!box)return;const r=await post({op:"devices"});if(!r.ok)return box.replaceChildren(el("p","note",r.error));const out=[],R=r.result;
 const act=async(b,ok)=>{const n=await post({op:"nonce"});if(!n.ok)return msg(n.error);const x=await post({...b,nonce:n.result.nonce});if(!x.ok)return msg(x.error);msg(ok);devs()};

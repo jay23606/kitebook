@@ -1517,7 +1517,7 @@ SJ=$T/start.jar; sp(){ curl -s -o $T/sp.out -D $T/sp.h -w %{http_code} -b $SJ -c
 curl -s -D $T/st.h $O/start > $T/st.html
 grep -q "Create your account" $T/st.html && grep -qi "frame-ancestors 'none'" $T/st.h && grep -qi "script-src 'nonce-" $T/st.h && grep -qi "^x-frame-options: DENY" $T/st.h && grep -qi "^cache-control: no-store" $T/st.h || die "/start page"
 [ "$(sp -d '{"op":"signup","account":"erin"}')" = 200 ] && EK=$(jq -r .result.admin_key $T/sp.out) && case "$EK" in ak.erin.*) true;; *) false;; esac && grep -i "^set-cookie: relay-erin\.session_token=" $T/sp.h | grep -qi "Max-Age=2592000.*HttpOnly.*SameSite=Lax" && KITEBOOK_ADMIN_TOKEN=$EK bun client/admin.ts list | jq -e '.spaces|map(.id)==["main"]' >/dev/null || { cat $T/sp.h $T/sp.out; die "web signup"; }
-curl -s -b $SJ $O/start | grep -q "Signed in to <b>erin" && curl -s -b $SJ $O/start | grep -q "Connect your Mac" && curl -s -b $SJ $O/start | grep -q ">$O/mcp</pre>" && pass "/start signed in: per-client cards with the MCP URL" || die "/start signed in"
+curl -s -b $SJ $O/start | grep -q "Signed in to <b>erin" && curl -s -b $SJ $O/start | grep -q 'id="s-runner"' && curl -s -b $SJ $O/start | grep -q ">$O/mcp</pre>" && pass "/start signed in: per-client cards with the MCP URL" || die "/start signed in"
 # these signed-in checks register a browser owner key for erin (10 at most per account): one shared profile, its key removed after the phone check
 NN(){ sp -d '{"op":"nonce"}' >/dev/null; jq -r .result.nonce $T/sp.out; }; okfps(){ sp -d '{"op":"policy","space":"main"}' >/dev/null; jq -r '.result.owner_keys[]?.fp' $T/sp.out | sort; }; OKFU=$(okfps)
 for f in $(comm -13 <(echo "$OKFU") <(okfps)); do sp -d "{\"op\":\"owner_key\",\"remove\":\"$f\",\"nonce\":\"$(NN)\"}" >/dev/null; done; [ "$(okfps)" = "$OKFU" ] || { cat $T/sp.out; die "drop the ui-polish checks' browser key"; }
@@ -2801,7 +2801,7 @@ BAC root $CJ name:Muse/Luna https://muse.example/cb '{"choice":"read","dispatch"
  || { cat $T/caa1.out $T/caa2.out; die "connect by name"; }
 PR=$(curl -s -X POST $O/connect -H 'content-type: application/json' -d '{"agent":"muse","name":"Nova"}'); PC=$(echo "$PR" | jq -r .user_code); PD=$(echo "$PR" | jq -r .device_code)
 pt(){ curl -s -X POST $O/token -d grant_type=urn:ietf:params:oauth:grant-type:device_code -d device_code=$PD; }
-echo "$PR" | jq -e --arg o "$O" '.name=="muse-nova" and .verification_uri_complete==($o+"/device?user_code="+.user_code)' >/dev/null && curl -s "$O/device?user_code=$PC" | grep -q 'Connect <b id="nmv">muse-nova</b> to your Mac' && pt | jq -e '.error=="authorization_pending"' >/dev/null \
+echo "$PR" | jq -e --arg o "$O" '.name=="muse-nova" and .verification_uri_complete==($o+"/device?user_code="+.user_code) and .setup==($o+"/setup.md") and .api==($o+"/v1") and .interval>0 and .expires_in>0' >/dev/null && curl -s "$O/device?user_code=$PC" | grep -q 'Connect <b id="nmv">muse-nova</b> to your Mac' && pt | jq -e '.error=="authorization_pending"' >/dev/null \
   && [ "$(curl -s -o $T/caa3.out -w %{http_code} -b $CJ -X POST $O/device -H 'content-type: application/json' -H "origin: $O" -d "{\"op\":\"approve\",\"user_code\":\"$PC\"}")" = 200 ] && sleep 1.2 && PT=$(pt) && PAT=$(echo "$PT" | jq -r .access_token) \
   && curl -s -X POST $O/v1/whoami -H "authorization: Bearer $PAT" | jq -e '.result.name=="muse-nova" and .result.spaces[0].verbs==["read","write","dispatch"] and .result.spaces[0].paths==["**","write:shared/**","write:kb/**"]' >/dev/null && pt | jq -e '.error=="invalid_grant"' >/dev/null \
   && curl -s -X POST $O/token -d grant_type=refresh_token -d refresh_token=$(echo "$PT" | jq -r .refresh_token) | jq -e '.access_token' >/dev/null \
@@ -2811,7 +2811,7 @@ echo "$PR" | jq -e --arg o "$O" '.name=="muse-nova" and .verification_uri_comple
 # memory (kb_add to kb/global), still can't write outside shared/ + kb/; a narrower app's refused kb_add says what to change and where
 kv1(){ curl -s -X POST $O/v1/$1 -H "authorization: Bearer $2" -H 'content-type: application/json' -d "$3"; }
 kv1 kb_add $PAT '{"text":"Pairing default note: the quokka lamp is amber","kind":"fact","scope":"global","key":"kbwd-quokka"}' > $T/kbwd1.out && jq -e '.ok' $T/kbwd1.out >/dev/null \
-  && kv1 write $PAT '{"path":"shared/kbwd.md","content":"x"}' | jq -e .ok >/dev/null \
+  && kv1 write $PAT '{"path":"shared/kbwd.md","content":"x"}' | jq -e .ok >/dev/null && kv1 kb_search "$(jq -r .access_token $T/caa1.out)" '{"query":"quokka lamp","k":3}' | jq -e '.ok and any(.result.results[]; .text|contains("quokka lamp is amber"))' >/dev/null \
   && kv1 write $PAT '{"path":"notes/kbwd.md","content":"x"}' > $T/kbwd2.out && jq -e '.ok==false and (.error|test("no write access to notes/kbwd.md")) and (.error|test("save only to shared memory"))' $T/kbwd2.out >/dev/null \
   && kv1 kb_add $(jq -r .access_token $T/caa1.out) '{"text":"read-only note","kind":"fact","scope":"global"}' > $T/kbwd3.out && jq -e '.ok==false and (.error|test("no write access")) and (.error|test("Settings, Connected apps")) and (.error|test("Read everything, save to shared memory, send tasks"))' $T/kbwd3.out >/dev/null \
   && for id in $(h kb_search --query quokka --k 20 | jq -r '.results[]|select(.text|test("quokka"))|.id'); do h kb_forget --id "$id" >/dev/null; done \
@@ -2819,7 +2819,7 @@ kv1 kb_add $PAT '{"text":"Pairing default note: the quokka lamp is amber","kind"
  || { cat $T/kbwd1.out $T/kbwd2.out $T/kbwd3.out; die "kb-write-default"; }
 AN=$(curl -s -b $CJ -X POST $O/start -H 'content-type: application/json' -d '{"op":"nonce"}' | jq -r .result.nonce)
 curl -s -b $CJ -X POST $O/start -H 'content-type: application/json' -d "{\"op\":\"app_add\",\"name\":\"Quill\",\"days\":7,\"nonce\":\"$AN\"}" > $T/caa4.out && AK=$(jq -r .result.key $T/caa4.out) \
-  && jq -e --arg m "$O/mcp" '.result.peer=="quill" and .result.prompt==("Build a custom integration to my Kitebook MCP server at "+$m+" (Streamable HTTP). Auth: Authorization: Bearer <key> — ask me for it through your secure credential flow. Test whoami and tools/list, then save it as a skill.") and (.result.expires>0)' $T/caa4.out >/dev/null \
+  && jq -e --arg m "$O/mcp" '.result as $r | $r.peer=="quill" and ($r.prompt|contains($m)) and ($r.prompt|contains($r.key)|not) and ($r.expires>0)' $T/caa4.out >/dev/null \
   && curl -s -X POST $O/mcp -H "authorization: Bearer $AK" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '.result.tools|length>0' >/dev/null \
   && curl -s -X POST $O/v1/whoami -H "authorization: Bearer $AK" | jq -e '.result.spaces[0].verbs==["read","write","dispatch"] and .result.spaces[0].paths==["**","write:shared/**","write:kb/**"]' >/dev/null \
   && curl -s -b $CJ -X POST $O/start -H 'content-type: application/json' -d '{"op":"policy","space":"main"}' | jq -e '[.result.spaces[0].log[]|select(.app=="quill" and (.summary|startswith("Added quill with an app key")))]|length==1' >/dev/null \

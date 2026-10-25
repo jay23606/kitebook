@@ -3,16 +3,17 @@
 
 # Kitebook
 
-**A realtime, versioned workspace across your agents: shared knowledge, files and handoffs that survive sandbox restarts, with coding agents available when needed.**
+**Pick up your work from any daily assistant. Shared knowledge, files and handoffs across platforms, with published work recoverable after sandbox resets.**
 
 ![version](https://img.shields.io/badge/version-v0.0.1%20preview-orange) ![status](https://img.shields.io/badge/status-early%2C%20expect%20bugs-red) ![license](https://img.shields.io/badge/license-MIT-blue) ![MCP](https://img.shields.io/badge/protocol-MCP-6f42c1)
 
-Kitebook does two things for one person who uses many agents:
+For one person whose daily work is scattered across assistants like Hark and Muse:
 
-1. **A personal knowledge base that summarizes all your agents.** Shared memory, notes and files, plus a summary of what each agent did and learned, in one place you own. Every assistant and coding agent reads and writes it, so none of them starts from zero.
-2. **Your personal assistants dispatch tasks to the coding agents on your Mac.** Grok bot, Hark or Muse asks; Pi, Codex or Claude Code does the work in a git worktree on your machine; you get back a branch, a diff, test results and a summary.
+1. **Continue across assistants.** Publish selected notes, decisions, source files and handoffs in one workspace you own. Another assistant can retrieve them and continue without you rebuilding the context. Kitebook does not automatically observe every conversation; assistants use its tools to share work.
+2. **Recover published work after a sandbox reset.** Pull the original files and latest handoff into a fresh environment. Credentials need the platform's persistent integration or secret storage; unpublished sandbox edits cannot be recovered.
+3. **Bring in coding agents when needed.** Optionally ask Pi, Codex or Claude Code on your Mac for repository work, with your permissions controlling execution. Results include a branch, diff, test results and summary.
 
-- **You approve each task** on your Mac or phone, and only that exact task.
+- **You choose each app's access.** Coding tasks ask for approval unless you explicitly save permission to run within chosen limits.
 - **Assistants never get a shell.** Your computer connects out, so no ports open.
 - **Open and self-hosted.** One small server (your Mac or a Cloudflare Worker), MIT licensed.
 
@@ -24,10 +25,19 @@ Kitebook does two things for one person who uses many agents:
    curl -fsSL https://raw.githubusercontent.com/um1b/kitebook/main/scripts/get.sh | bash
    ```
    Windows (PowerShell): `irm https://raw.githubusercontent.com/um1b/kitebook/main/scripts/get.ps1 | iex`. It starts Kitebook, finds the coding agents you already have and opens Kitebook in your browser, signed in.
-2. **Connect an assistant.** In Kitebook, open **Settings → Connection**, press **Turn on public access**, and give the `https://…/mcp` link it shows to your assistant (Hark, Muse, Grok bot) as an MCP connector, and keep the recommended **Read everything, save to shared memory, send tasks**.
+2. **Give your daily assistant the URL.** In **Settings → Connection**, press **Turn on public access**, then **Copy connection request** and paste it into Hark, Muse or another assistant. It reads the setup instructions and starts pairing where its platform supports it; you open its approval link and choose access. For clients with a custom MCP connector field, use the `/mcp` link instead. If the provider rejects the hostname, follow the [domain guide](docs/domain.md).
 3. **Share context.** Ask an assistant to save a project note in Kitebook, then have another assistant read it. For files and datasets that must survive a sandbox restart, use [workspace pull/publish](docs/workspace-sync.md). Coding tasks are optional: ask for a change, approve it when prompted, and get a branch and summary back.
 
 Every step in detail: [docs/quickstart.md](docs/quickstart.md). The installer uses a source checkout; prebuilt binaries and Homebrew packages are planned, with availability tracked in [releases](docs/releases.md). This page follows its current branch; the installer follows stable `main`, so features on `dev` arrive there after promotion.
+
+## How to use
+
+- **Share a decision:** ask your assistant to save a project note in Kitebook, then ask another assistant to retrieve it with its source.
+- **Switch assistants:** ask the current assistant to publish the original files and a handoff: goal, completed work, next step and open questions. Ask the next assistant to read that handoff and recover the linked files before continuing.
+- **Correct something:** update the existing decision or note so the next assistant can retrieve the current version, rather than adding a contradictory memory.
+- **Resume after a reset:** load the persistent connection, verify access, then recover the project's published files and handoff. A stored checkpoint without its local files needs a fresh snapshot.
+
+The [usage walkthrough](docs/how-to-use.md) includes requests to paste into your assistants, a two-assistant sharing check, restart recovery, and optional coding help. Start with a small, non-sensitive project.
 
 ## How it works
 
@@ -63,7 +73,7 @@ flowchart LR
 
 Daily agents can exchange files, datasets and handoffs without GitHub, then recover published work after a sandbox restart. See [Restart-safe workspaces](docs/workspace-sync.md).
 
-Every assistant and every coding agent reads and writes the same knowledge base, so what one of them learns or does, the others can see. Your Mac's runner dials out to Kitebook, picks up tasks, asks you first, and hands each one to a coding agent in a separate git worktree.
+Connected assistants can retrieve the knowledge and files their permissions allow. Published context is available to the others when they next read or synchronize it. For optional coding work, your Mac's runner connects out and hands authorized tasks to a coding agent in a separate git worktree.
 
 ```mermaid
 sequenceDiagram
@@ -86,9 +96,9 @@ sequenceDiagram
 One task's life: an assistant asks, Kitebook attaches what it already knows, your runner asks you, and only then does an agent run. The result, a short summary and anything the agent learned are written back into the knowledge base, so the next assistant or agent starts from there. More detail, including trust boundaries and what never leaves your Mac: [docs/architecture.md](docs/architecture.md).
 
 ## Who it's for, and why
-For one person who uses many agents: a few personal assistants (Grok bot, Hark, Muse, Dots) to think and plan, and a few coding agents on their own machine to do the work, next to their repos and credentials.
+For one person who uses several daily assistants for ongoing work. Research, files and decisions can end up scattered across platforms, making it harder to resume. Kitebook gives those assistants one workspace for selected context and recoverable handoffs. Coding agents can use that context too, when needed.
 
-Today each agent keeps its own memory, and every assistant needs its own bridge to every coding agent: N assistants times M agents, most of them a raw shell. Kitebook is **one open knowledge base and protocol** in the middle: every agent shares the same memory, sees what the others did, and can hand off work, with your approval in between.
+You choose which assistants connect and what they can read or change. The shared workspace is independent of their disposable sandboxes and does not require GitHub for context sharing.
 
 ## Supported assistants and agents
 | Personal assistants (read memory, send tasks) | Status |

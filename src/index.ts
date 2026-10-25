@@ -13,6 +13,7 @@
 import { ROOT_ACCOUNT, isRoot } from "../client/account.ts";
 import { OPS, READ_OPS, openapi, jsonSchema, sha256, type Peer, type Res } from "./ops.ts";
 import { guide, joinGuide } from "./guide.ts";
+import { dailyGuide } from "./onboarding.ts";
 import { CODES, typeOf } from "./events.ts";
 import { approvePage, PAGE_HEADERS } from "./approve.ts";
 import { oauthFetch, wwwAuth, signupLimit, grantSummary } from "./oauth.ts";
@@ -110,7 +111,8 @@ async function front(req0: Request, env: Env, reqId: string): Promise<Response> 
     // a person opening the bare URL in a browser lands on /start; agents (fetchers send no Sec-Fetch-Dest: document) get the guide
     // (a browser without Sec-Fetch-* still asks for text/html first; agents ask for markdown, JSON or */*)
     if (req.method === "GET" && url.pathname === "/" && (req.headers.get("sec-fetch-dest") === "document" || /^\s*text\/html/i.test(req.headers.get("accept") ?? ""))) return Response.redirect(url.origin + "/start", 302);
-    if (req.method === "GET" && ["/", "/llms.txt", "/setup", "/setup.md"].includes(url.pathname)) return md(guide(url.origin));
+    if (req.method === "GET" && ["/", "/setup", "/setup.md"].includes(url.pathname)) return md(dailyGuide(url.origin));
+    if (req.method === "GET" && url.pathname === "/llms.txt") return md(guide(url.origin));
     if (url.pathname === "/openapi.json") return json(openapi(url.origin));
     // The token comes in the Authorization header only. ?token= links were removed (auth spec v2): a credential in a URL is written to proxy,
     // tunnel and browser logs and synced with bookmarks. A request that still sends one gets a 401 saying how to send it instead.
