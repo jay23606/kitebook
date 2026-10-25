@@ -51,7 +51,7 @@ The resulting public address is `https://kitebook.example.com`. The local servic
 
 ### 4. Test from the daily assistant
 
-Give Hark or Muse the public URL, or use **Copy connection request** in Settings. The assistant should fetch `/setup.md`, start pairing, show you its approval link, and verify `whoami` plus the MCP tools or HTTP API after approval. Then save a harmless note and have another assistant read it. [Full usage walkthrough](how-to-use.md).
+Give Hark or Muse the public URL, or use **Copy connection request** in Settings. The assistant should fetch `/setup.md`, prefer its native integration (pair only when unavailable), show you its approval link, and verify `whoami` plus the MCP tools or HTTP API after approval. Then, with your permission, save a harmless note and have another assistant read it. [Full usage walkthrough](how-to-use.md).
 
 A successful `/health` response only proves basic reachability. It does not prove authentication, provider acceptance, streaming, or credential persistence across a sandbox reset. Kitebook provides its own app authentication; an additional browser-only Access login/challenge can prevent an assistant from reaching the endpoint. If you use an additional access policy, verify that your assistant supports its authentication method.
 
@@ -64,7 +64,8 @@ A successful `/health` response only proves basic reachability. It does not prov
 | Tunnel is healthy but returns 502 | Application route uses HTTP and Kitebook's public port, normally `127.0.0.1:7821`; `kitebook status` reports the server running. |
 | Health works but `/setup.md` returns a login page | An upstream access policy or challenge is intercepting the request. Verify compatibility from the assistant's environment. |
 | Mac connects, assistant refuses the URL | Check the provider's hostname/network restrictions from that assistant. A Tailscale plugin alone is not proof of reachability. |
-| API returns 401 or 403 | Refresh/sign in again for 401; check the app's approved access for 403. Do not repeatedly pair or broaden permissions automatically. |
+| Cloudflare returns HTTP 403 / error 1010 | Check the client's request headers. Muse's template should send `User-Agent: muse-custom-connector/1`; Python's default user agent was blocked in the owner's deployment. Preserve the stored credential, verify the corrected transport once, and report continued blocking to the owner. See [Cloudflare's explanation](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-1xxx-errors/error-1010/). |
+| Kitebook returns JSON 401 or 403 | Refresh/sign in again for 401; check the app's approved access for a permission 403. Do not repeatedly pair or broaden permissions automatically. |
 | Old quick-tunnel URL stopped working | Copy the new stable address into the assistant's saved connection; authorize again if its host requires it. |
 
 `kitebook mcp diagnose` separates network, TLS and sign-in failures **from the machine where it runs**. A Mac-side success cannot verify another platform's network policy. No router port forwarding is needed for the tunnel.
