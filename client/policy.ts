@@ -14,7 +14,7 @@ import { createPublicKey, verify as cverify, createHash } from "crypto";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
-import { canon, policyMsg, POLICY_TYPE, standingEntry, autorunOn, type PolicyEntry } from "./payload.ts";
+import { canon, policyMsg, POLICY_TYPE, standingEntry, autorunOn, sessionsOf, type PolicyEntry } from "./payload.ts";
 
 export const fingerprint = (k: string) => createHash("sha256").update(String(k)).digest("hex").slice(0, 16).match(/..../g)!.join("-"); // = src/policy.ts
 const keyOf = (k: string) => createPublicKey({ key: Buffer.from(String(k).slice(5), "base64url"), format: "der", type: "spki" });
@@ -42,6 +42,14 @@ export class PolicyStore {
   }
 }
 export const storeFor = (name: string) => new PolicyStore(join(homedir(), ".kitebook", `policy-${name}.json`));
+// The enabled default applies only inside a verified, non-rolled-back owner policy.
+export function sessionAccess(env: any, pinned: string[], space: string, store: PolicyStore, app: string): { level: "off" | "read" | "write"; why?: string } {
+  const v = verifyEnvelope(env, pinned, space);
+  if ("error" in v) return { level: "off", why: `the permissions on the server aren't usable here: ${v.error}` };
+  const rb = store.accept(v.policy); if (rb) return { level: "off", why: rb };
+  const level = sessionsOf(v.policy.apps?.[app]);
+  return level === "off" ? { level, why: `session access for ${app} is off (Settings -> Assistants -> Agent sessions)` } : { level };
+}
 export type Standing = { entry: PolicyEntry; seq: number; autorun?: true } | { why: string; seq: number | null; quiet?: boolean };
 // What the owner's standing permission says for this task now. quiet: the sender has no standing permission at all (ask as always).
 // autorun: it comes from "Run tasks without asking" (payload.ts autorunOn), so the caller also checks that the sender is one of the owner's own, still-connected apps.

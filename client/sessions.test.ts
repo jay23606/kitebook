@@ -6,7 +6,8 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { generateKeyPairSync, sign as csign } from "crypto";
 import { checkEnvelope } from "../src/policy.ts";
-import { summarize, describeEntry, payloadOf, policyMsg, POLICY_TYPE, sessionsOf } from "./payload.ts";
+import { summarize, describeEntry, payloadOf, policyMsg, POLICY_TYPE, sessionsOf, keepSessions } from "./payload.ts";
+import { PolicyStore, sessionAccess } from "./policy.ts";
 import { toolsFor, SESSION_TOOLS } from "../src/mcpx.ts";
 import { OPS } from "../src/ops.ts";
 
@@ -24,20 +25,44 @@ test("the policy entry: sessions off | read | write, anything else refused", asy
   expect(await checkEnvelope(signed({ hark: { tasks: "ask", projects: [], sessions: "read" } }), [pub], "main")).toBe(null);
   expect(await checkEnvelope(signed({ hark: { tasks: "ask", projects: [], sessions: "write" } }), [pub], "main")).toBe(null);
   expect(await checkEnvelope(signed({ hark: { tasks: "ask", projects: [], sessions: "all" } }), [pub], "main")).toMatch(/sessions must be off \| read \| write/);
-  expect(sessionsOf({ tasks: "ask", projects: [] })).toBe("off"); expect(sessionsOf({ sessions: "bogus" })).toBe("off");
+  expect(sessionsOf(null)).toBe("write"); expect(sessionsOf({ tasks: "ask", projects: [] })).toBe("write");
+  expect(sessionsOf({ sessions: "off" })).toBe("off"); expect(sessionsOf({ sessions: "bogus" })).toBe("off");
+});
+
+test("default access still requires a pinned signed policy; explicit choices, forged policies and rollback are enforced by the runner", () => {
+  const store = new PolicyStore(join(H, "signed-default.json")), check = (e: any, keys = [pub]) => sessionAccess(e, keys, "main", store, "muse");
+  expect(check(null).level).toBe("off");
+  expect(check(signed({}), []).level).toBe("off");
+  expect(check(signed({}))).toEqual({ level: "write" });
+  expect(check(signed({ muse: { tasks: "ask", projects: [], sessions: "off" } }, 2)).level).toBe("off");
+  expect(check(signed({})).why).toMatch(/rollback/);
+  const tampered = signed({}, 3); tampered.policy.seq = 4; expect(check(tampered).why).toMatch(/bad signature/);
+  expect(check(signed({ muse: { tasks: "ask", projects: [], sessions: "read" } }, 3))).toEqual({ level: "read" });
+  expect(check(signed({}, 4))).toEqual({ level: "write" });
+});
+
+test("task and folder changes preserve an explicit session Off or read choice; an explicit session change still works", () => {
+  for (const sessions of ["off", "read", "write"]) {
+    const prev = { tasks: "ask", projects: [], sessions };
+    expect(keepSessions(prev, { tasks: "auto", projects: ["repo"] })).toMatchObject({ tasks: "auto", sessions });
+    expect(keepSessions(prev, null)).toMatchObject({ tasks: "ask", sessions });
+    expect(keepSessions(prev, { tasks: "ask", projects: [], sessions: "write" }).sessions).toBe("write");
+  }
+  expect(keepSessions(null, null)).toBeNull();
 });
 
 test("the owner's audit line says the change in plain words", () => {
   expect(summarize("hark", null, { tasks: "ask", projects: [], sessions: "read" })).toBe("hark can search and read your agent sessions on your computers");
   expect(summarize("hark", { tasks: "ask", projects: [], sessions: "read" }, { tasks: "ask", projects: [], sessions: "off" })).toBe("hark can't see your agent sessions");
-  expect(summarize("hark", { tasks: "auto", projects: ["kb"], keys: [] }, { tasks: "auto", projects: ["kb"], keys: [], sessions: "write" })).toMatch(/^hark can search, read and continue your agent sessions/);
+  expect(summarize("hark", { tasks: "auto", projects: ["kb"], keys: [], sessions: "read" }, { tasks: "auto", projects: ["kb"], keys: [], sessions: "write" })).toMatch(/^hark can search, read and continue your agent sessions/);
   expect(describeEntry("hark", { tasks: "ask", projects: [], sessions: "read" })).toBe("hark asks you before every task; it can search and read your agent sessions on your computers");
   expect(summarize("hark", null, { tasks: "auto", projects: ["kitebook"], until: Date.UTC(2026, 9, 25), push: false })).toBe("hark can now run tasks in kitebook on its own until Oct 25"); // unchanged without sessions
 });
 
-test("tools/list: the session tools only once the owner allowed them, never for a runner", () => {
+test("tools/list: session tools are discoverable by default; explicit Off/read restrict them, never listed for a runner", () => {
   const names = (o: any) => toolsFor("assistant", o).map(t => t.name);
-  expect(names({}).filter(n => n.startsWith("session"))).toEqual([]);
+  expect(names({}).filter(n => n.startsWith("session")).sort()).toEqual([...SESSION_TOOLS.write].sort());
+  expect(names({ sessions: "off" }).filter(n => n.startsWith("session"))).toEqual([]);
   expect(names({ sessions: "read" }).filter(n => n.startsWith("session")).sort()).toEqual(["session_get", "session_status", "sessions_search"]);
   expect(names({ sessions: "write" }).filter(n => n.startsWith("session")).sort()).toEqual([...SESSION_TOOLS.write].sort());
   expect(toolsFor("runner").map(t => t.name).filter(n => SESSION_TOOLS.write.includes(n))).toEqual([]);

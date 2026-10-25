@@ -4007,7 +4007,7 @@ bsp '{"op":"brief","space":"brief"}' >/dev/null; PREV=$(jq -r '.result.spaces[0]
   && bsp '{"op":"brief","space":"brief"}' >/dev/null && jq -e '.result.spaces[0].suggestions[0].text|test("REDACTED") and (test("sk-abc")|not)' $T/bsp.out >/dev/null \
   && [ "$(bset "{\"action\":\"dismiss\",\"id\":\"$(jq -r '.result.spaces[0].suggestions[0].id' $T/bsp.out)\"}")" = 200 ] && bv $BH brief | jq -e '.result.text|test("REDACTED for deploys")|not' >/dev/null \
   && pass "assistant brief: Undo puts the previous version back from the file's history (same etag as before); a save from a stale tab is refused (409); a suggestion with a secret is redacted and can be dismissed" || { cat $T/bsp.out; die "brief undo/stale/redact"; }
-# ---- live-sessions (src/space/sessions.ts, client/sessions-store.ts, client/runner-sessions.ts): the owner's local agent sessions over MCP/API/CLI: off by default, an owner-signed grant, read on the computer only, fork never writes the source ----
+# ---- live-sessions (src/space/sessions.ts, client/sessions-store.ts, client/runner-sessions.ts): the owner's local agent sessions over MCP/API/CLI: enabled by default under a verified owner policy, read on the computer only, fork never writes the source ----
 bun client/admin.ts space sess >/dev/null
 SA=$(bun client/admin.ts peer shark assistant 2>/dev/null); SD=$(bun client/admin.ts peer sdots assistant 2>/dev/null); SRT=$(bun client/admin.ts peer smac runner 2>/dev/null)
 bun client/admin.ts grant shark sess read,write,dispatch "**" >/dev/null; bun client/admin.ts grant sdots sess read,write,dispatch "**" >/dev/null; bun client/admin.ts grant smac sess read,write,delete,dispatch "**" >/dev/null
@@ -4048,16 +4048,20 @@ jq -n --arg u "$KITEBOOK_URL" --arg tk "$SRT" --arg srp "$SRP" --arg op "$SOP" -
   agents:{pi:["sh","-c",("printf \"%s\\n---END---\\n\" \"$0\" >> " + $pl + "; echo resumed={session}; echo did-it; case \"$0\" in *SESS-ASK*) echo \"[relay-question: which one]\";; esac"),"{prompt}"]}, projects:{sr:{path:$srp, agent:"pi"}}}' > $SH/runner.json
 SRS=$PWD/client/runner.ts; (cd $T && HOME=$SH KITEBOOK_TEST=1 KITEBOOK_TEST_DIALOG=1 bun $SRS $SH/runner.json > $T/sessrun.log 2>&1) & SRUN=$!
 trap 'kill $SP ${SRUN:-} 2>/dev/null; killmine node_modules/.bin/vite; killmine "workerd serve"' EXIT
-for i in $(seq 1 60); do sv $SA describe | jq -e '.result.runners[]|select(.name=="smac")|.advertised' >/dev/null 2>&1 && sv $SA sessions_search '{}' | jq -e '.error|test("Settings")' >/dev/null && break; sleep 0.5; done
+for i in $(seq 1 60); do sv $SA describe | jq -e '.result.runners[]|select(.name=="smac")|.advertised' >/dev/null 2>&1 && break; sleep 0.5; done
+[ "$(sset shark '{"tasks":"ask","projects":[]}')" = 200 ] && sv $SA describe | jq -e '.result.sessions.allowed=="write" and (.result.sessions.tools|index("sessions_search")!=null)' >/dev/null \
+  && sv $SA sessions_search '{"query":"upload"}' | jq -e '.ok and (.result.sessions|length)==1' >/dev/null \
+  && smcp $SA '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name]|(index("sessions_search")!=null and index("session_send")!=null)' >/dev/null \
+  && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"off"}')" = 200 ] && [ "$(sset sdots '{"tasks":"ask","projects":[],"sessions":"off"}')" = 200 ] \
+  || die "sessions enabled default"
 sv $SA describe | jq -e '.result.sessions.allowed=="off" and .result.sessions.tools==[] and (.result.runners[]|select(.name=="smac")|.advertised)' >/dev/null && sv $SA sessions_search '{"query":"webhook"}' > $T/s0.json && jq -e '.ok==false and (.error|test("Settings -> Assistants -> shark -> \"Agent sessions\""))' $T/s0.json >/dev/null \
   && sv $SA session_create '{"agent":"pi","prompt":"x","project":"sr"}' | jq -e '.ok==false and (.error|test("start or continue"))' >/dev/null \
   && smcp $SA '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name]|(index("sessions_search")==null and index("session_send")==null and index("ask")!=null)' >/dev/null \
-  && ! grep -Eq "sessions (search|get) from" $T/sessrun.log \
+  && grep -q "sessions search from shark: 1 session(s)" $T/sessrun.log \
  || { cat $T/s0.json; tail -20 $T/sessrun.log; die "sessions off"; }
 [ "$(cat $T/ssp.code)" = 200 ] && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"read"}')" = 200 ] && jq -e '.result.summary=="shark can search and read your agent sessions on your computers"' $T/ssp.out >/dev/null \
   && [ "$(sset shark '{"tasks":"ask","projects":[],"sessions":"everything"}')" = 400 ] && grep -q "sessions must be off | read | write" $T/ssp.out \
   && sv $SA describe | jq -e '.result.sessions.allowed=="read"' >/dev/null && smcp $SA '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq -e '[.result.tools[].name]|(index("sessions_search")!=null and index("session_get")!=null and index("session_status")!=null and index("session_create")==null)' >/dev/null \
-  && curl -s -b $SJ $KITEBOOK_URL/settings | grep -q 'Your agent sessions' \
  || { cat $T/ssp.out; die "sessions grant"; }
 sv $SA sessions_search '{"query":"webhook"}' > $T/s1.json; sv $SA sessions_search '{"agent":"claude"}' > $T/s2.json; sv $SA sessions_search '{"cwd":"'$SRP'","limit":50}' > $T/s3.json
 jq -e '.ok and .result.computer=="smac" and (.result.sessions|map(.id)|sort)==["pi-own-1","pi-own-2"] and (.result.sessions[0]|.agent=="pi" and .cwd=="'$SRP'" and (.live|not) and (.snippet|test("webhook")))' $T/s1.json >/dev/null \

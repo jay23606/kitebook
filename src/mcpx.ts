@@ -106,11 +106,11 @@ const TOOLS: Record<string, TM> = {
 // tool stays unlisted (callable by name) to keep the list short.
 export const ASSISTANT_TOOLS = ["agent_models", "mcp_status", "brief_propose", "describe", "presence", "peers", "whoami", "task_create", "ask", "ask_get", "ask_to_task", "task_promote", "task_get", "task_list", "task_status", "sync", "sync_read", "sync_ack", "sync_status", "sync_publish",
   "task_steer", "task_answer", "task_cancel", "task_message", "inbox", "ack", "notify", "change", "code_status", "ls", "read", "grep", "glob", "write", "patch", "kb_search", "kb_add", "kb_get", "relay_update", "status"];
-export const SESSION_TOOLS = { read: ["sessions_search", "session_get", "session_status"], write: ["sessions_search", "session_get", "session_status", "session_create", "session_send"] } as Record<string, string[]>; // listed once the owner allowed Agent sessions
+export const SESSION_TOOLS = { read: ["sessions_search", "session_get", "session_status"], write: ["sessions_search", "session_get", "session_status", "session_create", "session_send"] } as Record<string, string[]>; // enabled by default, explicit per-app restrictions still apply
 export const AGENT_TOOLS = ["presence_report"], TARGET_TOOLS = ["task_claim", "task_progress", "task_complete"], EXPERIMENTAL_TOOLS = ["relay_logs", "ci_run", "ci_status"]; // listed while Experimental is on (describe.experimental), when they answer
 export function toolsFor(kind: string, o: { target?: boolean; experimental?: boolean; sessions?: string } = {}) {
   const all = toolsList(); if (kind === "runner") return all.filter(t => !SESSION_TOOLS.write.includes(t.name)); // a Mac doesn't read its own owner's sessions through Kitebook
-  const keep = new Set([...ASSISTANT_TOOLS, ...(kind === "coding_agent" ? AGENT_TOOLS : []), ...(o.target ? TARGET_TOOLS : []), ...(o.experimental ? EXPERIMENTAL_TOOLS : []), ...(SESSION_TOOLS[o.sessions ?? ""] ?? [])]);
+  const keep = new Set([...ASSISTANT_TOOLS, ...(kind === "coding_agent" ? AGENT_TOOLS : []), ...(o.target ? TARGET_TOOLS : []), ...(o.experimental ? EXPERIMENTAL_TOOLS : []), ...(SESSION_TOOLS[o.sessions ?? "write"] ?? [])]);
   return all.filter(t => keep.has(t.name));
 }
 export function toolsList() {

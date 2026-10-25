@@ -6,12 +6,13 @@
 // link's trust secret (sessionStorage, from the #fragment) and proves it with an HMAC when it registers its key, so the Mac trusts it with
 // no fingerprint to compare (client/settings-sync.ts); any other browser is trusted by a click in a browser the Mac already trusts (cmd trust).
 import { PRESENCE_JS } from "./presence-ui.ts";
-import { canon } from "../client/payload.ts";
+import { canon, keepSessions } from "../client/payload.ts";
 
 // sw: the two switches as the next version carries them (autorun, experimental); a legacy dev field reads as both and is never written
 // again (client/payload.ts migratePolicy). autorun(on, until) / experimental({ci, gh_status} | null): one signed change each.
 export const OWNER_JS = `const OWN=(()=>{const te=new TextEncoder(),b64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");
 const canon=(${canon.toString()});
+const keepSessions=(${keepSessions.toString()});
 ${PRESENCE_JS}
 const sp=async b=>{const r=await withPresence(()=>fetch("/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)}));return await r.json()};
 const idb=()=>new Promise((ok,no)=>{const r=indexedDB.open("kitebook-owner",1);r.onupgradeneeded=()=>r.result.createObjectStore("keys");r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)});
@@ -30,7 +31,7 @@ async function read(space){const st=await sp({op:"policy",space});if(!st.ok)thro
 async function set(acct,space,app,entry,access,undo){const st=await read(space),s=st.spaces[0],k=await ready(acct,st.owner_keys);
 const cur=s.envelope?s.envelope.policy:null,apps={...(cur?cur.apps:{})},old=cur&&cur.apps[app];
 /* the Agent sessions switch (live-sessions) is its own setting: a task/folder change keeps it (Undo restores exactly what was there) */
-if(!undo&&old&&(old.sessions==="read"||old.sessions==="write")&&!(entry&&"sessions" in entry))entry={...(entry||{tasks:"ask",projects:[]}),sessions:old.sessions};
+if(!undo)entry=keepSessions(old,entry);
 if(entry)apps[app]=entry;else delete apps[app];
 const p={v:1,type:"relay-policy",space,seq:(cur?cur.seq:0)+1,at:Date.now(),apps,...sw(cur)};const sig=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},k.priv,te.encode("relay-policy:v1|"+canon(p)));
 const r=await sp({op:"policy_set",space,app,envelope:{policy:p,key:k.pub,sig:b64u(sig)},access:access||null,undo_of:undo||null,nonce:await nonce()});if(!r.ok)throw new Error(r.error);return r.result}

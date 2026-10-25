@@ -27,6 +27,7 @@
 // browsers it trusts (client/settings-sync.ts). No user text is ever put into the page as HTML.
 import { isRoot, ROOT_ACCOUNT } from "../client/account.ts";
 import { connectionPrompt } from "./onboarding.ts";
+import { sessionsOf } from "../client/payload.ts";
 import { PRESENCE_JS } from "./presence-ui.ts";
 import { PAGE_HEADERS, esc } from "./approve.ts";
 import { OWNER_JS } from "./policy-ui.ts";
@@ -112,6 +113,7 @@ ${PASSKEY_JS}
 {const mo=()=>{const h=location.hash.slice(1).split(",").filter(Boolean),all=h.includes("all");let first=null;
 for(const d of document.querySelectorAll("details.fold"))if(all)d.open=true;for(const k of h){let e=document.getElementById(k);if(!e)continue;first=first||e;for(let p=e;p;p=p.parentElement)if(p.matches&&p.matches("details.fold"))p.open=true}if(first&&!all)first.scrollIntoView()};mo();addEventListener("hashchange",mo)} /* /settings#apps, #approvals, #releases…: open the fold it's in; #all opens every fold */
 const S=JSON.parse(document.getElementById("st").textContent),$=id=>document.getElementById(id),AB=S.acct===${JSON.stringify(ROOT_ACCOUNT)}?"/api/auth":"/u/"+S.acct+"/api/auth";
+const sessionLevel=(${sessionsOf.toString()});
 let mt=0;const msg=t=>{$("msg").textContent=t;clearTimeout(mt);if(t)mt=setTimeout(()=>{$("msg").textContent=""},12000)};
 ${PRESENCE_JS}
 const post=async b=>{const r=await withPresence(()=>fetch("/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)}));return await r.json()};
@@ -209,7 +211,7 @@ const xl=el("label","f","How long it keeps access"),xs=document.createElement("s
 const go=btn("Add and show its key","save",async()=>{const name=ni.value.trim();if(!name)throw new Error("Type a name, for example Muse");const r=await post({op:"app_add",name,choice:Object.keys(ch).find(k=>ch[k].checked),days:+xs.value||null,nonce:await nonce()});if(!r.ok)throw new Error(r.error);ADDED=r.result;msg("Added "+r.result.peer+". Copy its key now: it isn't shown again.");await load()});go.id="add-go";d.append(go);return d}
 function appCard(sp,a,e){const w=el("div","app");w.id="app-"+a.name;const h=el("div","ah");h.append(el("b","",a.name),el("span","tag",kindLabel(a.kind)));if(a.never_connected)h.append(el("span","tag","not connected yet"));if(a.expires&&a.expires<=Date.now())h.append(el("span","tag warn","access ended"));
 w.append(h,el("p","now",canDo(a)+" "+taskWords(a,e)),el("p","note",expWords(a)));
-if(e&&(e.sessions==="read"||e.sessions==="write")){const n=el("p","note sess-now",e.sessions==="write"?"It can search, read and continue your agent sessions (your own ones only as a copy).":"It can search and read your agent sessions.");n.id="sess-now-"+a.name;w.append(n);
+if(sessionLevel(e)!=="off"){const n=el("p","note sess-now",sessionLevel(e)==="write"?"Agent sessions: enabled. It can search, read and request continuations (a copy by default; writing into your original asks you).":"It can search and read your agent sessions.");n.id="sess-now-"+a.name;w.append(n);
 const lg=(sp.sessions_log||[]).filter(x=>x.app===a.name).slice(0,5);for(const x of lg)w.append(el("p","note",when(Date.parse(x.at))+" · "+x.op+(x.agent?" "+x.agent:"")+(x.id?" "+x.id:"")))}
 const d=el("details","chg"),f=el("div","form"),cur=presetOf(a),nm="p-"+sp.space+"-"+a.name;d.append(el("summary","","Change"),f);
 f.append(el("h3","","What it can do"));const ch={};
@@ -222,15 +224,15 @@ for(const p of sp.projects){const L=el("label","chk"),i=document.createElement("
 const xl=el("label","f","How long it keeps access"),xs=document.createElement("select");xs.className="exp";xs.id="exp-"+a.name;xl.htmlFor=xs.id;
 for(const[v,t]of[["keep",a.expires?(a.expires>Date.now()?"Keep: until "+day(a.expires):"Keep: ended "+day(a.expires)):"Keep: no end date"],["1","1 day from now"],["7","7 days from now"],["30","30 days from now"],["0","No end date"]]){const o=el("option","",t);o.value=v;xs.append(o)}
 const sync=()=>{const p=Object.keys(ch).find(k=>ch[k].checked);fl.hidden=fi.hidden=!(p==="folder"||p==="tasks");pj.hidden=!(p==="tasks"||p==="shared"||(p==="custom"&&a.verbs.includes("dispatch")))};Object.values(ch).forEach(i=>i.onchange=sync);sync();
-/* Agent sessions (live-sessions): may it search/read, or also continue, your own coding-agent sessions on your computers? Off by default */
+/* Agent sessions: enabled by default; explicit per-app Off/read choices remain in effect. */
 const sl=el("label","f","Your agent sessions (Codex, Claude Code, Pi... on your computers)"),ss=document.createElement("select");ss.className="sess";ss.id="sess-"+a.name;sl.htmlFor=ss.id;
-for(const[v,t]of[["off","Off: it can't see them"],["read","Search and read (read-only)"],["write","Search, read and send (continues a copy; in place asks you)"]]){const o=el("option","",t);o.value=v;o.selected=(e&&e.sessions||"off")===v;ss.append(o)}
+for(const[v,t]of[["off","Off: it can't see them"],["read","Search and read (read-only)"],["write","Search, read and send (default; in place asks you)"]]){const o=el("option","",t);o.value=v;o.selected=sessionLevel(e)===v;ss.append(o)}
 f.append(sl,ss);const sv=btn("Save","save",()=>saveApp(sp,a,e,ch,fi,pj,xs,ss));sv.id="save-"+a.name;
 const rm=btn("Remove","danger rm",async b=>{if(!b.classList.contains("sure")){b.classList.add("sure");b.textContent="Yes, remove "+a.name;setTimeout(()=>{b.classList.remove("sure");b.textContent="Remove"},6000);return}
 const r=await post({op:"revoke",peer:a.name});if(!r.ok)throw new Error(r.error);msg(a.name+" is removed. Its sign-in stopped working.");await load()});rm.id="rm-"+a.name;
 const bar=el("div","bar");bar.append(sv,rm);f.append(fl,fi,pj,xl,xs,bar);w.append(d);return w}
 async function saveApp(sp,a,e,ch,fi,pj,xs,ss){const p=Object.keys(ch).find(k=>ch[k].checked),said=[];
-if(ss&&ss.value!==((e&&e.sessions)||"off")){const r=await OWN.sessions(S.acct,sp.space,a.name,ss.value);said.push(r.summary)}
+if(ss&&ss.value!==sessionLevel(e)){const r=await OWN.sessions(S.acct,sp.space,a.name,ss.value);said.push(r.summary)}
 const folder=fi.value.trim().replace(/^\\/+|\\/+$/g,""),projects=[...pj.querySelectorAll("input.pj:checked")].map(i=>i.value).sort();
 const cur=presetOf(a),curF=folderOf(a),curP=live(e)?[...e.projects].sort():[];
 const changed=p!=="custom"&&(p!==cur||((p==="folder"||p==="tasks")&&folder!==curF)||((p==="tasks"||p==="shared")&&projects.join()!==curP.join()));
