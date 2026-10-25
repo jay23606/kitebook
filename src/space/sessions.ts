@@ -1,9 +1,9 @@
 // Space ops: the owner's LOCAL agent sessions (live-sessions). sessions_search / session_get read the owner's own Codex, Claude Code, Pi,
 // Gemini, Copilot, opencode and Cursor sessions on their computer; session_create / session_send start or continue a coding-agent session
 // through the normal task machinery (worktree, approvals, results, the live driver when the runner has one).
-// Transcripts are private, so:
+// Transcripts stay on the Mac; session tools are enabled by default, with these boundaries:
 //   - the grant is the owner-SIGNED policy entry apps[<app>].sessions = "read" (search/get) | "write" (+ create/send), set in Settings ->
-//     Assistants (a policy change, so it needs presence: kitebook confirm with the master password / Touch ID). Off by default. The runner
+//     Assistants (a policy change, so it needs presence: kitebook confirm with the master password / Touch ID). Missing entries use the enabled default; explicit Off/read restrictions win. The runner
 //     re-checks the signature itself before it reads anything (client/runner-sessions.ts), so the server can't grant it;
 //   - the server never stores a transcript: a read is an in-memory request to the runner (event sessions.requested, which only that runner
 //     sees; it fetches the args with sessions_take and answers with sessions_reply), held in memory until the caller reads it (25 s max);
@@ -12,6 +12,7 @@
 import { RelayError, sha256, type Peer } from "../ops.ts";
 import { ACTIVE, now, rid, redact } from "./util.ts";
 import type { Space, Op } from "../space.ts";
+import { sessionsOf } from "../../client/payload.ts";
 
 export const SESSION_AGENTS = ["codex", "claude", "pi", "gemini", "copilot", "opencode", "cursor"];
 export const LEVELS = ["off", "read", "write"];
@@ -23,7 +24,7 @@ const clamp = (v: any, lo: number, hi: number, d: number) => { const n = Number(
 const str = (v: any, n: number) => v == null ? null : String(v).slice(0, n);
 
 // What the owner allowed this app (kitebook's view of the signed policy; the runner re-checks the signature): off | read | write
-export function sessionsLevel(sp: Space, app: string): string { const e = sp.metaJ("policy")?.policy?.apps?.[app]; const l = e?.sessions; return LEVELS.includes(l) ? l : "off"; }
+export function sessionsLevel(sp: Space, app: string): string { return sessionsOf(sp.metaJ("policy")?.policy?.apps?.[app]); }
 export function needSessions(sp: Space, peer: Peer, want: "read" | "write") {
   const m = sp.member(peer.id); if (!m || m.revoked) throw new RelayError(403, `no access to workspace ${sp.spaceId}`);
   if (m.kind === "runner" || m.kind === "human") throw new RelayError(403, "the session tools are for assistants and coding agents");

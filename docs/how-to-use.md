@@ -72,7 +72,7 @@ Keep the Kitebook server's storage persistent too, and maintain an independent b
 
 ## Optional: ask a coding agent for help
 
-When a task needs repository access, builds or tests, connect a coding runner from **Connection options → Coding runner**. Then ask your daily assistant to inspect or delegate work using the projects that runner reports. New coding work follows your approval settings. Existing coding sessions have separate permissions; connecting an assistant does not grant session access.
+When a task needs repository access, builds or tests, connect a coding runner from **Connection options → Coding runner**. Then ask your daily assistant to inspect or delegate work using the projects that runner reports. New coding work follows your approval settings. Agent session tools are enabled by default: assistants can search and read saved coding conversations and request continuations as copies. Normal task permissions and approvals still apply. Writing into your original conversation always asks you; an open session is never given a second writer. Restrict an individual app to Search and read or Off under Settings → Connected apps → Agent sessions. The Mac must trust the signed owner policy before it reads sessions.
 
 For example:
 

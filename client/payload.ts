@@ -63,10 +63,13 @@ export function cmdShape(c: any): string | null {
   if (c.runner != null && !/^[a-z0-9][a-z0-9_-]{0,31}$/.test(String(c.runner))) return "runner: a runner name or null";
   return JSON.stringify(c).length > 2000 ? "too large" : null;
 }
-// sessions (live-sessions): may this app search/read ("read") or also start/continue ("write") the owner's local agent sessions? off/absent = no
+// Sessions are enabled by default; explicit off/read overrides remain authoritative.
 export type PolicyEntry = { tasks: "ask" | "auto" | "off"; projects: string[]; push?: boolean; until?: number | null; keys?: string[]; sessions?: "off" | "read" | "write" };
 export const SESSION_WORDS: Record<string, string> = { off: "can't see your agent sessions", read: "can search and read your agent sessions on your computers", write: "can search, read and continue your agent sessions (a copy; continuing one in place asks you)" };
-export const sessionsOf = (e: any): "off" | "read" | "write" => e?.sessions === "read" || e?.sessions === "write" ? e.sessions : "off";
+export const sessionsOf = (e: any): "off" | "read" | "write" => e?.sessions == null ? "write" : ["off", "read", "write"].includes(e.sessions) ? e.sessions : "off";
+// Changing task/folder permissions must preserve an explicit session choice, including Off.
+export const keepSessions = (prev: any, next: any) => ["off", "read", "write"].includes(prev?.sessions) && !(next && Object.prototype.hasOwnProperty.call(next, "sessions"))
+  ? { ...(next ?? { tasks: "ask", projects: [] }), sessions: prev.sessions } : next;
 // the entry that lets `from` run in `project` on its own now, or why not (plain words: it goes into the review page's "why you're asked")
 export function autoEntry(p: any, from: string, project: string | null | undefined, now = Date.now()): { entry: PolicyEntry } | { why: string } {
   const e: PolicyEntry | undefined = p?.apps?.[from];
@@ -130,7 +133,7 @@ export function describeExperimental(x: Experimental | null | undefined): string
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 // One line per change, the way the panel and its audit list say it ("Hark can now run tasks in kitebook on its own until Oct 25").
 export function describeEntry(app: string, e: PolicyEntry | null | undefined): string {
-  const s = sessionsOf(e) === "off" ? "" : `; it ${SESSION_WORDS[sessionsOf(e)]}`;
+  const s = e?.sessions == null || sessionsOf(e) === "off" ? "" : `; it ${SESSION_WORDS[sessionsOf(e)]}`;
   if (!e || e.tasks === "ask") return `${app} asks you before every task${s}`;
   if (e.tasks === "off") return `${app} can't send tasks or push${s}`;
   return `${app} can now run tasks in ${(e.projects ?? []).join(", ") || "no project"} on its own${e.until ? ` until ${day(Number(e.until))}` : ""}${e.push ? ", and push its branches" : ""}${s}`;

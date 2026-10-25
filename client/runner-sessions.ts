@@ -1,6 +1,6 @@
 // Runner side of the session tools (live-sessions; server: src/space/sessions.ts, store: client/sessions-store.ts).
 //   sessions_search / session_get: the server announces a request (event sessions.requested, only this runner sees it); we fetch it
-//     (sessions_take), check the OWNER-SIGNED policy ourselves (apps[<asker>].sessions read|write, signed by a browser key runner.json
+//     (sessions_take), check the OWNER-SIGNED policy ourselves (session access defaults to write; explicit off/read wins, signed by a browser key runner.json
 //     pins, not older than the newest policy this computer accepted), read the owner's local sessions read-only, redacted, and answer
 //     (sessions_reply; the server keeps it in memory until the asker reads it). A server can't grant this: an unsigned or forged policy reads nothing.
 //   session tasks (task.session from session_create / session_send): sessionPrep() before the run. fork: a copy of the owner's session
@@ -33,9 +33,7 @@ export async function advert(projects: Record<string, any> | undefined) {
 export async function allowed(app: string): Promise<{ level: "off" | "read" | "write"; why?: string }> {
   if (cfg.sessions === false) return { level: "off", why: `runner.json "sessions": false on this computer` };
   let r: any; try { r = await call("policy", {}); } catch (e: any) { return { level: "off", why: `couldn't read your permissions (${e.message})` }; }
-  const v = P.verifyEnvelope(r?.envelope, ownerKeys(), cfg.space); if ("error" in v) return { level: "off", why: `the permissions on the server aren't usable here: ${v.error}` };
-  store ??= P.storeFor(me.name); const rb = store.accept(v.policy); if (rb) return { level: "off", why: rb };
-  const l = v.policy.apps?.[app]?.sessions; return l === "read" || l === "write" ? { level: l } : { level: "off", why: `you haven't let ${app} see your agent sessions (Settings -> Assistants -> Agent sessions)` };
+  store ??= P.storeFor(me.name); return P.sessionAccess(r?.envelope, ownerKeys(), cfg.space, store, app);
 }
 
 const busy = new Set<string>();
@@ -82,7 +80,7 @@ export const hooks = { allowed };
 // Before a session task runs. preamble: text the prompt carries before the task (a fork's transplant); resume: the owner's session (id, or
 // Pi's file) to continue in place; fork: for a live driver that forks natively ({from}); error: refuse with this. dry: checks only (before asking).
 // The grant is checked here, not only by the server when the task was created: a fork or a continue reads the owner's transcript, so the
-// owner-SIGNED policy has to say "write" for the sender (same rule as onRequest: a server can't grant it), at the pre-approval check AND
+// owner-SIGNED policy has to permit write for the sender (the default, unless explicitly restricted) (same rule as onRequest: a server can't grant it), at the pre-approval check AND
 // again when the run starts (runTask), so a task queued or waiting for approval dies once the owner takes the grant back.
 // continue degrades to a fork (never in place) when we can't tell whether the session is open elsewhere, or the agent can't resume by id.
 export async function sessionPrep(t: any, liveFork?: (agent: string) => boolean | Promise<boolean>, dry = false): Promise<{ preamble?: string; resume?: string; fork?: { from: string }; error?: string; note?: string }> {

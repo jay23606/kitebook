@@ -511,6 +511,7 @@ function pairBody(code: string, name: string, signedIn: boolean, port: number, r
   const opt = (v: string, t: string, on = false) => `<label><input type="radio" name="acc" value="${v}"${on ? " checked" : ""}> ${t}</label>`;
   return `<div id="form"><h1>Connect <b id="nmv">${esc(name)}</b> to your Mac</h1>
 <p class="note">It can read every folder, save to shared memory (the shared/ and kb/ folders) and send tasks to your Mac (you approve each one). Code <b>${esc(code)}</b>.</p>
+<p class="note">Agent sessions are enabled by default: it can search and read your coding conversations and request a continuation as a copy. Task approvals still apply. Change this under Settings → Connected apps → Agent sessions.</p>
 <form id="pf"><label for="pw">Your Kitebook master password</label><input type="password" id="pw" autocomplete="current-password" autofocus>
 <div class="bar"><button id="ok" type="submit">Connect</button><button id="tid" type="button" class="link">Use fingerprint or face unlock</button></div></form>
 <div id="pkbar" class="bar" hidden><button id="pkok" type="button" class="link">Use a passkey (optional)</button></div>
@@ -592,6 +593,7 @@ export function consentBody(o: ConsentUi) {
   return `<div id="form"><div class="hd"><div class="av" aria-hidden="true">${initial}</div><div><h1>${app}${c.self ? ` <span class="pill">unverified name</span>` : ""}</h1><p>wants to connect to <b>your Mac</b>${o.machine ? ` (${esc(o.machine)})` : ""}</p></div></div>
 ${c.auto ? `<p class="warn" id="sendto">${app} wants to connect. After approving, you'll be sent to <b>${esc(c.auto.host)}</b>.${c.auto.others.length ? ` Another app called ${esc(c.name.replace(/-\d+$/, ""))} connects from ${esc(c.auto.others.join(", "))}: this is a separate connection and gets nothing from that one.` : ""}${c.auto.unnamed ? " It didn't say its name: type one below." : ""}</p>` : ""}
 <p class="sum" id="sum">${esc(canSay(c.name, PRESETS.assistant.verbs, PRESETS.assistant.paths))}</p>
+<p class="note">Agent sessions are enabled by default: search and read your coding conversations, and request continuations as copies. Task permissions and approvals still apply. You can turn session access off for this app in Settings.</p>
 <div id="presets" role="radiogroup" aria-label="What ${app} can do">
 ${preset("tasks", "Read everything, save to shared memory, send tasks (recommended)", "Reads every folder, saves only to shared memory (the shared/ and kb/ folders), and can ask your Mac to run tasks. You approve each one.")}
 ${preset("folder", "Just this folder", `Reads and edits only <span class="pf">${esc(folder)}</span>. It can't send tasks or see anything else.`)}
