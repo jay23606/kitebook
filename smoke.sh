@@ -2883,6 +2883,9 @@ TPK=$T/tunnel-pk.json; BASE=$KITEBOOK_URL HOST=kb-tunnel.test RUNNER=$UPGR STATE
 kill $SP 2>/dev/null; killmine node_modules/.bin/vite; for i in $(seq 1 40); do curl -sf $KITEBOOK_URL/health >/dev/null 2>&1 || break; sleep 0.25; done # one dev server in this checkout at a time
 # (fix-security) a stopped cf dev Kitebook's state, copied into workerd's layout for the scripts/serve.sh checks further down
 sleep 1; cp -r $KITEBOOK_DATA $T/oldstate; bun scripts/migrate-cfdev.ts $T/oldstate $T/srv > $T/migcf.out 2>&1 || { cat $T/migcf.out; die "migrate-cfdev"; }
+# Pre-public Relay auth migration is an optional maintainer regression, not a prerequisite for a fresh public Kitebook clone.
+# Run KITEBOOK_LEGACY_TESTS=1 only in a checkout retaining that private snapshot; never fetch/publish private history for CI.
+if [ "${KITEBOOK_LEGACY_TESTS:-0}" = 1 ]; then
 git cat-file -e b464385^{commit} 2>/dev/null || die "existing installs: needs commit b464385 in this clone (a shallow clone lacks it: git fetch --unshallow; CI checks out with fetch-depth: 0)"
 MO=$T/mig; mkdir -p $MO/src $MO/data; git archive b464385 | tar -x -C $MO/src && ln -s $PWD/node_modules $MO/src/node_modules && cp .dev.vars $MO/src/ 2>/dev/null; MP=$((PORT + 64)); MU=http://127.0.0.1:$MP
 # setsid forks when its caller leads a process group, so $! isn't the new group: the session leader records its own pid
@@ -2925,6 +2928,9 @@ jq -e '.result.readd_passkey==true and .result.passkeys==[]' $T/mo2.json >/dev/n
   && curl -s -b $NMJ -X POST $MU/start -H 'content-type: application/json' -d '{"op":"revoke","peer":"claude-old"}' | jq -e .ok >/dev/null && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $MU/v1/whoami -H "authorization: Bearer $MCAT")" = 401 ] \
   && pass "existing installs: Settings asks to add the old passkey again (it can't be carried over); old connections stay listed and removing one stops its old token" || { cat $T/mo2.json; die "settings after update"; }
 mig_down new; killmine node_modules/.bin/vite
+else
+  echo "SKIP pre-public Relay auth migration (KITEBOOK_LEGACY_TESTS=1 requires its historical snapshot)"
+fi
 KITEBOOK_EVENTS_TEST=1 KITEBOOK_OPEN_SIGNUP=1 cf dev > $T/server3.log 2>&1 & SP=$!   # the main kitebook again, same data
 for i in $(seq 1 60); do curl -sf $KITEBOOK_URL/health >/dev/null && break; sleep 1; done; curl -sf $KITEBOOK_URL/health >/dev/null || { cat $T/server3.log; die "server did not restart after the migration check"; }
 # ---- plain workerd self-host (selfhost/config.capnp): DOs and blobs on local disk, no Cloudflare ----
@@ -3558,14 +3564,14 @@ uhdown
 # parallel run's leftovers got that vite build OOM-killed ("the server didn't build", the runner then stuck on the old cf dev server)
 chmod -R u+w $UH/.kitebook-server $TN/mh $T/srv 2>/dev/null || true; rm -rf $UH/.kitebook-server $TN/mh $T/srv || true; HEADX=$(git rev-parse HEAD)
 # ---- git-pull-update: a plain `git pull` in the Kitebook checkout IS the update (client/git-pull.ts): the runner checks it and applies it ----
-# Fake Mac like update-path's: a clone at afa48a4 (runner with no watcher), origin/main = this commit, the server still on cf dev, and a
+# Fake Mac like update-path's: a clone at the first public Kitebook release, origin/main = this commit, a legacy cf dev host, and a
 # runner job that launchd brings back when it exits (KeepAlive, here a loop). First time: git pull + kitebook restart; then pulls alone.
 U3=$T/u3; U3P=$((PORT + 88)); U3S=$U3/relay-cf; U3C=$U3/code-kitebook; U3L=$U3/lc; U3D=$U3/upstream; mkdir -p $U3L $U3/Library/LaunchAgents $U3/Library/Logs $U3/.cloudflared $U3/proj $U3S
-# A public export starts new history. Model the same fast-forward with today's tree on the legacy fixture parent, only in this test.
-git merge-base --is-ancestor afa48a4 HEAD || HEADX=$(git commit-tree HEAD^{tree} -p afa48a4 -m 'smoke upgrade fixture')
-git init -q --bare $U3/origin.git && git push -q $U3/origin.git $HEADX:refs/heads/main && git clone -q -b main $U3/origin.git $U3C && git -C $U3C reset -q --hard afa48a4 && ln -s $PWD/node_modules $U3C/node_modules
+# Use published history: this test never needs a private pre-export commit.
+U3BASE=$(git rev-parse d20b8d7^{commit}); git merge-base --is-ancestor "$U3BASE" HEAD || die "public upgrade baseline is not an ancestor"
+git init -q --bare $U3/origin.git && git push -q $U3/origin.git $HEADX:refs/heads/main && git clone -q -b main $U3/origin.git $U3C && git -C $U3C reset -q --hard $U3BASE && ln -s $PWD/node_modules $U3C/node_modules
 git clone -q -b main $U3/origin.git $U3D && git -C $U3D config user.name up && git -C $U3D config user.email up@x && git -C $U3C config user.name me && git -C $U3C config user.email me@x
-git archive afa48a4 | tar -x -C $U3S; ln -s $PWD/node_modules $U3S/node_modules; cp -r $T/oldstate $U3S/.relay-data; U3ADM="old-admin-$(openssl rand -hex 8)"; echo "ADMIN_TOKEN=$U3ADM" > $U3S/.dev.vars
+git archive $U3BASE | tar -x -C $U3S; ln -s $PWD/node_modules $U3S/node_modules; cp -r $T/oldstate $U3S/.relay-data; U3ADM="old-admin-$(openssl rand -hex 8)"; echo "ADMIN_TOKEN=$U3ADM" > $U3S/.dev.vars
 git -C $U3/proj init -q -b main && echo hi > $U3/proj/a && git -C $U3/proj add -A && git -C $U3/proj -c user.name=t -c user.email=t@t commit -qm i
 printf '{"url":"http://127.0.0.1:%s","token":"%s","space":"main","launchctl":"%s","server":{"dir":"%s"},"gitWatchEvery":5,"agents":{"fake":["true"]},"projects":{"p":{"path":"%s","agent":"fake"}}}\n' $U3P "$GPU" $UH/bin/launchctl $U3S $U3/proj > $U3S/runner.json; chmod 600 $U3S/runner.json
 cat > $U3/Library/LaunchAgents/dev.relay.server.plist <<PL
@@ -3590,18 +3596,18 @@ U3E launchctl bootstrap gui/$(id -u) $U3/Library/LaunchAgents/dev.relay.server.p
 for i in $(seq 1 20); do curl -sf http://127.0.0.1:$U3P/health >/dev/null && break; sleep 0.25; done
 [ "$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:$U3P/@fs$U3S/runner.json)" = 200 ] || die "git-pull-update: the fake old host should leak before the pull"
 # first time on the old host: git pull (Pi or the owner), then kitebook restart (the form that works with no kitebook command on PATH)
-git -C $U3C pull -q --ff-only 2>&1 && [ "$(git -C $U3C rev-parse HEAD)" = $HEADX ] || die "git-pull-update: git pull on the afa48a4 clone"
+git -C $U3C pull -q --ff-only 2>&1 && [ "$(git -C $U3C rev-parse HEAD)" = $HEADX ] || die "git-pull-update: git pull on the first public release clone"
 U3E bash -c "cd $U3C && bun client/runner.ts service $U3S/runner.json restart runner" > $U3/restart.out 2>&1; grep -q '"runner": "restarted"' $U3/restart.out || { cat $U3/restart.out; die "git-pull-update: kitebook restart"; }
 for i in $(seq 1 120); do [ "$(jq -r .state $U3/.kitebook/host-upgrade.json 2>/dev/null)" = done ] && [ "$(jq -r .head $U3/.kitebook/git-update.json 2>/dev/null)" = $HEADX ] && grep -q "connected as gpu" $U3/Library/Logs/kitebook-runner.log && break; sleep 2; done
 U3T=$(jq -r .token $U3S/runner.json); U3A=$(sed -n 's/^ADMIN_TOKEN=//p' $U3S/.dev.vars); U3U=http://127.0.0.1:$U3P
 grep -q "host upgrade: the server is still the old cf dev one; upgrading it now (git pull to ${HEADX:0:7})" $U3/Library/Logs/kitebook-runner.log \
-  && grep -q "update: afa48a4 -> ${HEADX:0:7} (a fast-forward on origin/main); applying" $U3/Library/Logs/kitebook-runner.log \
+  && grep -q "update: ${U3BASE:0:7} -> ${HEADX:0:7} (a fast-forward on origin/main); applying" $U3/Library/Logs/kitebook-runner.log \
   && grep -q "<string>$U3S/scripts/serve.sh</string>" $U3/Library/LaunchAgents/dev.kitebook.server.plist && curl -sf $U3U/health >/dev/null \
   && [ "$(curl -s -o /dev/null -w %{http_code} $U3U/@fs$U3S/runner.json)" != 200 ] && ! curl -s $U3U/@fs$U3S/runner.json | grep -q '"token"' && ! curl -s $U3U/package.json | grep -q '"dependencies"' \
   && [ "$U3T" != "$GPU" ] && [ "$U3A" != "$U3ADM" ] && [ "$(curl -s -o /dev/null -w %{http_code} -X POST $U3U/v1/whoami -H "authorization: Bearer $GPU")" = 401 ] \
   && [ "$(curl -s -X POST $U3U/v1/whoami -H "authorization: Bearer $U3T" | jq -r .result.name)" = gpu ] && jq -e '.[-1]|.result=="installed" and .by=="git pull"' $U3/.kitebook/updates.json >/dev/null \
   && ! grep -qF -e "$U3T" -e "$GPU" -e "$U3A" -e "$U3ADM" $U3/.kitebook/host-upgrade.out $U3/Library/Logs/kitebook-runner.log \
-  && pass "git-pull-update: on an afa48a4 host, git pull + kitebook restart is the whole update: the new runner checks the pull (fast-forward on origin/main) and upgrades the cf dev server by itself: no /@fs leak, admin + runner token replaced, runner back online, 'updated' in Settings history" \
+  && pass "git-pull-update: from the first public release, git pull + kitebook restart is the whole update: the new runner checks the pull (fast-forward on origin/main) and upgrades the cf dev server by itself: no /@fs leak, admin + runner token replaced, runner back online, 'updated' in Settings history" \
   || { cat $U3/restart.out; cat $U3/.kitebook/host-upgrade.out; cat $U3/.kitebook/git-update.json; tail -40 $U3/Library/Logs/kitebook-runner.log; die "git-pull-update first pull"; }
 # the bug seen on a real Mac: that update left no kitebook command ("command not found"). The new runner puts the wrapper in ~/.local/bin
 # (running this clone's cli.ts), the relay shim (the host ran Relay), and the PATH block in the login shell's rc files; a new login shell finds it
