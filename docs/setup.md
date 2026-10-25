@@ -160,6 +160,8 @@ Everything that grants or widens access (approving a computer, an app or a sign-
 
 ## Address compatibility and avoiding a domain
 
+For a complete setup from domain/DNS to a working daily-assistant connection, follow [A stable address for your daily assistants](domain.md). For the URL-first pairing and sharing workflow, see [How to use Kitebook](how-to-use.md).
+
 Local coding agents should use the local listener. For remote assistants, address reachability and the assistant's hostname policy are separate checks. [Tailscale Funnel publishes an HTTPS ts.net address to the internet; Serve limits access to the tailnet](https://tailscale.com/kb/1223/funnel). A Tailscale API plugin alone does not prove that the assistant sandbox can reach your private service or that ts.net is allowed as an MCP destination.
 
 | Connection | Evidence and next step |

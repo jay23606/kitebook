@@ -198,6 +198,12 @@ const acctFns = {
     return { id, poll, code, expires: exp, space: sp.id };
   },
   loginList(d: D) { return (d.sql.exec("select id, code, app, expires from oauth_connect where client_id='login' and status='pending' and expires>? order by created", Date.now()).toArray() as any[]).map(r => ({ id: r.id, code: r.code, label: r.app, expires: r.expires })); },
+  async loginView(d: D, poll: string) {
+    const id = row(d, "select id from oauth_connect where poll_hash=? and client_id='login'", await sha256(String(poll ?? "")))?.id;
+    const r = id && acctFns.connectRow(d, id);
+    if (!r || r.status !== "pending") fail("invalid_grant", "That sign-in request expired or was already answered. Send a new one.");
+    return { id: r.id, nonce: r.nonce };
+  },
   async loginDecide(d: D, id: string, yes: boolean) { const r = acctFns.connectRow(d, id); if (!r || r.client_id !== "login") fail("invalid_request", "No such sign-in request.");
     return await acctFns.connectDecide(d, { id, nonce: r.nonce, yes, by: "a signed-in browser" }); },
   connectRow(d: D, id: string) {
@@ -206,6 +212,11 @@ const acctFns = {
     return r;
   },
   connectGet(d: D, id: string) { // runner side: what to ask the owner (no poll secret, no client details beyond the app's name)
+    if (/^[A-Za-z]{4}-[A-Za-z]{4}$/.test(id)) {
+      const matches = d.sql.exec("select id from oauth_connect where code=? order by created desc limit 2", id.toUpperCase()).toArray() as any[];
+      if (matches.length > 1) fail("invalid_request", "More than one request has this code. Use its request id instead.");
+      id = matches[0]?.id ?? "";
+    }
     const r = acctFns.connectRow(d, id); if (!r) fail("invalid_request", "No such connection request.");
     const q = JSON.parse(r.req); return { id: r.id, kind: q.kind ?? "connect", phone: !!q.phone, status: r.status, code: r.code, nonce: r.nonce, app: r.app, name: q.name, replace: q.replace, space: q.space, folder: q.folder, can: q.can, expires: r.expires };
   },
@@ -419,8 +430,8 @@ async function connectStart(req: Request, env: any, url: URL, h: H, k: ReturnTyp
   const name = connName(cleanName(String(b.agent ?? b.client_id ?? "")), cleanName(String(b.name ?? b.client_name ?? ""))) || "app";
   const r = await rpc(h.global(), "deviceStart", { client_id: "connect:" + name, req: { ...PAIR_DEFAULT, kind: "assistant", name: slug(name), via: "connect" } }, k);
   const link = `${o}/device?user_code=${r.user_code}`;
-  return oj({ ...r, name, verification_uri: `${o}/device`, verification_uri_complete: link, token_endpoint: `${o}/token`, grant_type: "urn:ietf:params:oauth:grant-type:device_code", mcp: `${o}/mcp`,
-    message: `Show the owner this link: ${link} (code ${r.user_code}; it works for 10 minutes). They open it on their Mac or phone and type their Kitebook master password (their Mac checks it). Meanwhile POST ${o}/token with grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=<device_code> every ${r.interval}s; it answers authorization_pending until then, then access_token (Authorization: Bearer for ${o}/mcp, 1 hour) and refresh_token (POST ${o}/token grant_type=refresh_token&refresh_token=<it> for a new one).` }, 200);
+  return oj({ ...r, name, verification_uri: `${o}/device`, verification_uri_complete: link, token_endpoint: `${o}/token`, grant_type: "urn:ietf:params:oauth:grant-type:device_code", mcp: `${o}/mcp`, api: `${o}/v1`, setup: `${o}/setup.md`,
+    message: `Show the owner this link: ${link} (code ${r.user_code}; expires in ${r.expires_in} seconds). They approve it themselves. Poll ${o}/token with grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=<device_code> no faster than every ${r.interval}s, stopping at expiry or denial. On slow_down increase the interval by at least 5s. Save the returned credentials in platform-persistent secret storage, then verify whoami and the supported MCP tools or HTTP API. See ${o}/setup.md for refresh, restart recovery and the connection check.` }, 200);
 }
 // the page reads the assertion's account (a presence-only approval: no session in this browser, the master password on the Mac is the proof)
 const assertAcct = (p: string) => { try { const j = JSON.parse(atob(String(p).split(".")[0].replace(/-/g, "+").replace(/_/g, "/"))); return ACCT_RE.test(j?.a ?? "") || isRoot(j?.a ?? "-") ? String(j.a) : null; } catch { return null; } };
@@ -500,9 +511,9 @@ function pairBody(code: string, name: string, signedIn: boolean, port: number, r
   const opt = (v: string, t: string, on = false) => `<label><input type="radio" name="acc" value="${v}"${on ? " checked" : ""}> ${t}</label>`;
   return `<div id="form"><h1>Connect <b id="nmv">${esc(name)}</b> to your Mac</h1>
 <p class="note">It can read every folder, save to shared memory (the shared/ and kb/ folders) and send tasks to your Mac (you approve each one). Code <b>${esc(code)}</b>.</p>
-<div id="pkbar" class="bar" hidden><button id="pkok" type="button">Approve with passkey</button></div>
 <form id="pf"><label for="pw">Your Kitebook master password</label><input type="password" id="pw" autocomplete="current-password" autofocus>
 <div class="bar"><button id="ok" type="submit">Connect</button><button id="tid" type="button" class="link">Use fingerprint or face unlock</button></div></form>
+<div id="pkbar" class="bar" hidden><button id="pkok" type="button" class="link">Use a passkey (optional)</button></div>
 <details><summary>Change access</summary><label for="name">Name</label><input type="text" id="name" value="${esc(name)}" autocomplete="off">
 <div class="ch">${opt("tasks", "Read everything, save to shared memory, send tasks (recommended)", true)}${opt("folder", "Just its own folder + send tasks")}${opt("read", "Read only")}</div></details>
 ${remote ? `<p class="small">Checked by your Mac: on another device (a phone), your password goes over HTTPS to your Mac, which checks it and forgets it; it isn't stored anywhere. Or run on your Mac: <code>kitebook approve ${esc(code)}</code>.</p>`
@@ -651,7 +662,7 @@ $("form").hidden=true;$("st-ok").hidden=false;$("done").textContent="Connected: 
 const on=()=>document.querySelectorAll("button").forEach(b=>b.disabled=false);
 $("pf").onsubmit=e=>{e.preventDefault();if(!$("pw").value)return msg("Type your Kitebook master password, then Enter");go({password:$("pw").value})};
 $("tid").onclick=()=>go({shortcut:true});
-/* this phone's passkey (src/passkey.ts), offered first when this browser added one; the master password stays below as the fallback */
+/* An existing phone passkey is an optional alternative below the password form. */
 if(kbPk.on()){$("pkbar").hidden=false;$("pkadd").hidden=true;$("pkok").onclick=async()=>{off();msg("Approve on your phone…");try{const [s0,c]=await post("/device",{op:"passkey_challenge",account:R.acct,action:"device_grant:"+R.code});
 if(s0!==200||!c.challenge)throw new Error(c.error_description||"no passkey is set up for approvals here: use your master password");
 const [s,j]=await post("/device",{op:"approve",user_code:R.code,account:R.acct,passkey:await kbPk.get(c),name:$("name").value.trim()||R.name,...access()});

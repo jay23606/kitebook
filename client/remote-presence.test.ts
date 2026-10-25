@@ -32,7 +32,7 @@ test("runner: the right password signs exactly that action (the server's normal 
 
 test("runner: only the owner's approvals that take the password (pairing code, presence confirmation); the off switch in runner.json", async () => {
   const { opts } = await setup(), lim = new RemoteLimiter(), audit: any[] = [];
-  expect(REMOTE_ACTION.test("confirm:BCDFGH")).toBe(true); expect(REMOTE_ACTION.test("device_password:abc")).toBe(false);
+  expect(REMOTE_ACTION.test("confirm:BCDFGH")).toBe(true); expect(REMOTE_ACTION.test("connect:cr_0123456789abcdef")).toBe(true); expect(REMOTE_ACTION.test("connect:task_123")).toBe(false); expect(REMOTE_ACTION.test("device_password:abc")).toBe(false);
   for (const a of ["device_password:abcd", "device_shortcut:x", "app_add:evil", "confirm:BCDFGH\n", "device_grant:bcdf-ghjk"]) {
     const r = await remoteAnswer({ action: a, password: PW }, opts(lim, audit)); expect(r.ok).toBe(false); expect((r as any).error).toMatch(/^refused/); }
   expect(audit.every(e => e.type === "remote_password_refused")).toBe(true);

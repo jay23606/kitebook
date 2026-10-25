@@ -70,7 +70,9 @@ export async function presenceAssert(s: DevState, action: string, reason = actio
   if (!s.id) return null;
   return assertWith(s, action, async msg => {
     let why = "";
-    if (presencePub(s.slot) && s.shortcut !== false) {
+    // The legacy Keychain ACL asks for the macOS password, then may ask for our password too.
+    // Use the Kitebook password directly; keep an existing biometric shortcut optional.
+    if (presencePub(s.slot) && s.shortcut !== false && !(presenceBackend().name === "keychain-acl" && hasPassword(s.slot))) {
       try { const sig = await presenceBackend().sign(s.slot, msg, reason); if (sig) return sig; why = "not confirmed"; } catch (e: any) { why = String(e?.message ?? e).slice(0, 120); }
       if (hasPassword(s.slot)) process.stderr.write(`(${presenceBackend().name} didn't confirm: ${why}. Using your master password instead.)\n`);
     }
@@ -167,6 +169,24 @@ export async function pairApprove(cfg: { url: string; token: string; name?: stri
   const r = await fetch(`${cfg.url}/device`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "approve", user_code: c, presence: p }) });
   const j: any = await r.json().catch(() => ({})); if (!j.ok) { console.error(`Not connected: ${j.error_description ?? j.error ?? r.status}`); return 1; }
   console.log(j.passkey ? `Added: ${j.name}. It can approve with its passkey now (remove it any time in Settings -> Devices).` : `Connected: ${j.name}. ${j.granted ?? ""} It finishes connecting on its own.`); return 0;
+}
+// A browser code can arrive before its local ask file. Resolve it before device pairing (same code format).
+export async function codeApprove(cfg: { url: string; token: string; name?: string }, code: string, yes = true): Promise<number> {
+  try {
+    let q: any;
+    try { q = await api(cfg, "connect_get", { id: code.toUpperCase() }); }
+    catch (e: any) {
+      if (e.message !== "No such connection request.") throw e;
+      if (!yes) { console.error("This is not a browser sign-in request. Nothing was approved."); return 1; }
+      return await pairApprove(cfg, code);
+    }
+    if (q.status !== "pending") throw new Error(`This sign-in request is ${q.status}. Send a new one.`);
+    const s = await mine(cfg); if (!s || s.state !== "active") throw new Error("This computer isn't an approved Kitebook device.");
+    const presence = yes ? await presenceAssert(s, `connect:${q.id}`, `sign in ${q.app} with code ${q.code}`) : null;
+    if (yes && !presence) throw new Error("Not confirmed; nothing was approved.");
+    await api(cfg, "connect_decide", { id: q.id, nonce: q.nonce, yes, ...(presence ? { presence } : {}) });
+    console.log(yes ? `Signed in: ${q.app}. It stays signed in for 30 days.` : `Sign-in refused: ${q.app}.`); return 0;
+  } catch (e: any) { console.error(`kitebook approve: ${e.message}`); return 1; }
 }
 // kitebook app add <name> [--access tasks|read|folder] [--days 1|7|30] [--json]: Settings' Add an app from the Mac. Prints the key ONCE and
 // the prompt to paste into the app (which asks for the key through its own secret prompt, so the key never sits in a chat).

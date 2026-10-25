@@ -147,4 +147,4 @@ export const APP_CHOICES: Record<string, { verbs: string[]; paths: (n: string) =
   read: { verbs: ["read"], paths: () => ["**"], say: "read only" },
   folder: { verbs: ["read", "write", "dispatch"], paths: n => [`kb/${n}/**`], say: "its own folder + send tasks" },
 };
-export const appPrompt = (mcp: string) => `Build a custom integration to my Kitebook MCP server at ${mcp} (Streamable HTTP). Auth: Authorization: Bearer <key> — ask me for it through your secure credential flow. Test whoami and tools/list, then save it as a skill.`;
+export const appPrompt = (mcp: string) => `Connect to my Kitebook MCP server at ${mcp} (Streamable HTTP). Prefer your platform's native custom connector and secure credential system. This connection uses an app key: request it through your secure credential flow and send it as Authorization: Bearer <key>. If native app-key integration is unavailable, explain the limitation before building a script. Never store credentials in a skill or disposable sandbox. Test whoami and tools/list before claiming success; keep a working connection until its replacement passes.`;

@@ -2,6 +2,16 @@
 import { test, expect } from "bun:test";
 import { connName, redirectWhy, redirectKey, shortAlias } from "../src/named.ts";
 import { helperAnswer, PAIR_ACTION } from "./device.ts";
+import { setupState } from "../src/onboarding.ts";
+
+test("daily-assistant setup needs a connected app and shared context, without a runner or coding task", () => {
+  expect(setupState(null)).toMatchObject({ agent: false, shared: false, all: false });
+  expect(setupState({ spaces: [{ peers: [{ kind: "runner", online: true }], done_tasks: 1, has_shared: true }] })).toMatchObject({ mac: true, agent: false, task: true, all: false });
+  expect(setupState({ spaces: [{ peers: [{ kind: "assistant", never_connected: true }], has_shared: true }] }).all).toBe(false);
+  expect(setupState({ spaces: [{ peers: [{ kind: "assistant", never_connected: false }] }] })).toMatchObject({ agent: true, shared: false, all: false });
+  expect(setupState({ spaces: [{ peers: [{ kind: "assistant", never_connected: false }], has_shared: true }] })).toEqual({ mac: false, agent: true, shared: true, task: false, all: true });
+  expect(setupState({ spaces: [{ peers: [{ kind: "coding_agent", never_connected: false }], has_shared: true }] }).all).toBe(true);
+});
 
 test("names: <agent>-<name>, slugged, one of them alone, max 40", () => {
   expect(connName("Muse", "Luna")).toBe("muse-luna"); expect(connName("hark", "Hark")).toBe("hark-hark");
@@ -26,11 +36,13 @@ test("pairing helper: signs only a pairing code, only for an active device, pass
   expect(PAIR_ACTION.test("device_grant:abcd-efgh")).toBe(false);
 });
 
-// G1 (owner, 2026-10-23 04:05): llms.txt read top-down led Muse to the old client_id device grant first; POST /connect must come first
-test("agent guide: POST /connect {agent,name} is the first way to connect; the client_id device grant is only a later legacy note", async () => {
+// Prefer host-managed integrations; the device fallback must still lead with named pairing rather than the legacy grant.
+test("agent guide prefers native integration, then named pairing before the legacy client_id device grant", async () => {
   const { guide } = await import("../src/guide.ts"), g = guide("https://kb.example");
   const c = g.indexOf("https://kb.example/connect"), id = g.indexOf("client_id=");
   expect(c).toBeGreaterThan(0); expect(id).toBeGreaterThan(c);
+  const native = g.indexOf("Prefer your platform's native connection");
+  expect(native).toBeGreaterThan(0); expect(native).toBeLessThan(c);
   const line = g.split("\n").find(l => l.startsWith("- No token yet?"))!;
   expect(line.indexOf("/connect")).toBeLessThan(line.indexOf("device_authorization")); expect(line).toMatch(/Legacy/);
 });

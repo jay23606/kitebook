@@ -279,8 +279,9 @@ export class SpaceTasks extends SpaceFiles {
       return { id: v.id, question: String(v.question ?? "").slice(0, 160), state: v.state, done: v.done, from: t.from, updated: t.updated, target: v.to, agent: v.agent, answer_s: v.answer_s, warm: v.session?.warm ?? null,
         answer: String(v.answer ?? v.partial ?? v.error ?? "").slice(0, 400) || null, needs_task: v.needs_task ? String(v.needs_task).slice(0, 200) : null, ran_as_task: (v as any).ran_as_task ?? null }; });
     const done_tasks = Number((this.sql.exec("select count(*) n from tasks where state='succeeded'").one() as any).n); // /start's Get started step 3
+    const has_shared = this.sql.exec("select 1 from tree where path like 'kb/%' or path like 'context/%' or (path like 'shared/%' and path not like 'shared/runners/%') limit 1").toArray().length > 0;
     const pz = this.pauseState();
-    return { space: this.spaceId, peers, open, needs_you: needs, recent, quick, week: this.weekStats(), done_tasks, paused: pz.all || Object.keys(pz.peers).length ? pz : null, autorun: (this as any).autorunState(), experimental: (this as any).experimentalState(), working: presenceView(this as any, null) };
+    return { space: this.spaceId, peers, open, needs_you: needs, recent, quick, week: this.weekStats(), done_tasks, has_shared, paused: pz.all || Object.keys(pz.peers).length ? pz : null, autorun: (this as any).autorunState(), experimental: (this as any).experimentalState(), working: presenceView(this as any, null) };
   }
   // The owner tapping a Status row (UX review #3): one task in detail, its headline (with the ONE next action), the summary, and the diff +
   // test log the runner already saved under tasks/<id>/. Read-only; peer-written text, rendered with textContent only by the page.

@@ -147,8 +147,9 @@ export async function approveCli(argv: string[]): Promise<number> {
     rmSync(base + ".answer", { force: true }); console.error(`${x.task}: the runner didn't pick the answer up (is it running?)`); return 1; };
   const [which, word] = rest;
   if (which) { const x = list.find((y: any) => y.task === which || String(y.code).toUpperCase() === which.toUpperCase());
-    if (!x && /^[A-Za-z]{4}-[A-Za-z]{4}$/.test(which) && !list.some((y: any) => String(y.code).toUpperCase() === which.toUpperCase())) { // a pairing code (POST /connect)
-      const DV = await import("./device.ts"), c = DV.cfgOf(argv); if (c) return await DV.pairApprove(c, which); }
+    if (!x && /^[A-Za-z]{4}-[A-Za-z]{4}$/.test(which) && !list.some((y: any) => String(y.code).toUpperCase() === which.toUpperCase())) { // pairing or browser sign-in; resolve before approval
+      if (word !== undefined && !/^(yes|y|approve|no|n|reject)$/.test(word)) { console.error("say yes or no: kitebook approve <code> yes|no"); return 2; }
+      const DV = await import("./device.ts"), c = DV.cfgOf(argv); if (c) return await DV.codeApprove(c, which, word === undefined || /^(yes|y|approve)$/.test(word)); }
     if (!x) { console.error(`nothing waiting with id or code ${which}${list.length ? `; waiting: ${list.map((y: any) => `${y.task} [${y.code}]`).join(", ")}` : ""}`); return 1; }
     if (word === undefined && process.stdin.isTTY) { process.stdout.write(`${x.gate === "connect" ? x.title : `Approve [${x.code}] ${x.title ?? x.task}`}?\n${x.gate === "connect" ? String(x.text ?? "").split("\n")[1] ?? "" : ""}\nApprove? [y/N] `); // kitebook approve <code>: asks y/N here
       let a = ""; for await (const line of console) { a = line.trim().toLowerCase(); break; } return await answer(x, a === "y" || a === "yes"); }
