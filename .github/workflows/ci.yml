@@ -30,7 +30,11 @@ jobs:
         with:
           bun-version: '1.4.3'
       - run: npm ci
-      - run: python3 -m pip install playwright
+      - name: Install browser tools outside the disposable smoke HOME
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/kitebook-playwright" playwright
+          echo "PYTHONPATH=$RUNNER_TEMP/kitebook-playwright" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/kitebook-browsers" >> "$GITHUB_ENV"
       - run: python3 -m playwright install --with-deps chromium
       - name: Synthetic local server configuration
         run: |
@@ -39,4 +43,13 @@ jobs:
       - run: npm run typecheck
       - run: bun test client/
       - name: Complete runtime smoke
-        run: scripts/smoke-slot.sh -k 2 -- scripts/smoke-par.sh -j 2 --keep
+        run: |
+          export SMOKE_PAR_DIR="$RUNNER_TEMP/smoke-logs"
+          scripts/smoke-slot.sh -k 2 -- scripts/smoke-par.sh -j 2 --keep || {
+            for log in "$SMOKE_PAR_DIR"/run*.log; do
+              echo "::group::$log"
+              tail -100 "$log"
+              echo '::endgroup::'
+            done
+            exit 1
+          }
