@@ -17,9 +17,6 @@ jobs:
     env:
       SKIP_NTFY: '1'
       KITEBOOK_REQUIRE_BROWSER: '1'
-      # Smoke changes HOME. Keep Python's user packages and browser cache independent of it.
-      PYTHONPATH: ${{ runner.temp }}/kitebook-playwright
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/kitebook-browsers
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -33,7 +30,11 @@ jobs:
         with:
           bun-version: '1.4.3'
       - run: npm ci
-      - run: python3 -m pip install --target "$PYTHONPATH" playwright
+      - name: Install browser tools outside the disposable smoke HOME
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/kitebook-playwright" playwright
+          echo "PYTHONPATH=$RUNNER_TEMP/kitebook-playwright" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/kitebook-browsers" >> "$GITHUB_ENV"
       - run: python3 -m playwright install --with-deps chromium
       - name: Synthetic local server configuration
         run: |
