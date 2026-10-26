@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, statSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import * as KB from "./kb.ts";
-import { resourceIO } from "./resource-guard.ts";
+import { apiCall, ApiError } from "./api.ts";
 
 export let cfg: any;
 export let me: any;
@@ -28,10 +28,11 @@ export function ioStats() { if (!process.env.KITEBOOK_TEST) return; try { writeF
 export function cfgNow(): any { try { const s = statSync(cfgPath), sig = `${s.size}:${s.mtimeMs}:${s.ino}`, me_ = cfgNow as any;
   if (me_.sig !== sig) { me_.val = JSON.parse(readFileSync(cfgPath, "utf8")); me_.sig = sig; io.cfgParses++; } return me_.val; } catch { return null; } }
 export async function call(op: string, args: any = {}, signal?: AbortSignal) {
-  return resourceIO(async signal => {
-    const r = await fetch(`${cfg.url}/v1/${op}`, { method: "POST", headers: H, body: JSON.stringify({ space: cfg.space, ...args }), signal });
-    const j: any = await r.json(); if (!r.ok || !j.ok) throw new Error(`${op}: answered HTTP ${r.status}: ${j.error ?? "request failed"}`); return j.result;
-  }, undefined, signal);
+  try { return await apiCall(cfg, op, args, { signal, headers: H }); }
+  catch (error) {
+    if (error instanceof ApiError) throw new Error(`${op}: answered HTTP ${error.status}: ${error.serverMessage ?? "request failed"}`);
+    throw error;
+  }
 }
 export const log = (...a: any[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
 

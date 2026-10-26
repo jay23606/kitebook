@@ -61,15 +61,15 @@ test("CLI missing local ask: resolves browser code before prompting; never falls
   const privateDir = join(homedir(), ".kitebook"); mkdirSync(privateDir, { recursive: true });
   writeFileSync(join(privateDir, "device-login-cli.json"), JSON.stringify({ slot: "login-cli", account: "root", id: "dv_cli", state: "active", shortcut: false }));
   process.env.KITEBOOK_TEST_PASSWORD = PW;
-  let status = "pending", fail = false, decisions: any[] = [], paths: string[] = [];
-  const server = Bun.serve({ port: 0, async fetch(req) { const path = new URL(req.url).pathname; paths.push(path);
+  let status = "pending", fail = false, decisions: any[] = [], paths: string[] = [], bodies: any[] = [];
+  const server = Bun.serve({ port: 0, async fetch(req) { const path = new URL(req.url).pathname; paths.push(path); bodies.push(await req.clone().json());
     if (path === "/v1/connect_get") return Response.json(fail ? { ok: false, error: "temporary failure" } : { ok: true, result: { id: "cr_0123456789abcdef", status, nonce: "nonce", code: "BCDF-GHJK", app: "Phone" } });
     if (path === "/v1/connect_decide") { decisions.push(await req.json()); return Response.json({ ok: true, result: {} }); }
     return Response.json({ ok: false, error: "wrong endpoint" }); } });
-  try { const c = { url: server.url.toString().replace(/\/$/, ""), token: "fixture", name: "login-cli" };
+  try { const c = { url: server.url.toString().replace(/\/$/, ""), token: "fixture", name: "login-cli", space: "unrelated-workspace" };
     expect(await DV.codeApprove(c, "bcdf-ghjk")).toBe(0); expect(decisions[0]).toMatchObject({ id: "cr_0123456789abcdef", yes: true, presence: expect.any(String) });
     expect(await DV.codeApprove(c, "BCDF-GHJK", false)).toBe(0); expect(decisions[1]).toMatchObject({ yes: false }); expect(decisions[1].presence).toBeUndefined();
     status = "expired"; expect(await DV.codeApprove(c, "BCDF-GHJK")).toBe(1); fail = true; expect(await DV.codeApprove(c, "BCDF-GHJK")).toBe(1);
-    expect(decisions.length).toBe(2); expect(paths).not.toContain("/device");
+    expect(decisions.length).toBe(2); expect(paths).not.toContain("/device"); expect(bodies.every(b => b.space === undefined)).toBe(true);
   } finally { server.stop(true); delete process.env.KITEBOOK_TEST_PASSWORD; }
 });

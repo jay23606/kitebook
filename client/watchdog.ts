@@ -9,6 +9,7 @@
 //   3. every run reports what it saw (op health_report), so op `status` and /start can say "Runner stopped 2h ago: self-restart failed"
 // Logs: ~/Library/Logs/kitebook-watchdog.log (launchd's StandardOutPath); every restart and alert also goes to the audit log.
 import "./brand.ts"; // first: RELAY_* env names from before the rename still work (client/brand.ts)
+import { apiCall } from "./api.ts";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
@@ -59,8 +60,7 @@ export async function once(cfgPath: string, o: { heal?: (cfg: any) => Promise<{ 
   const f = o.f ?? fetch, cfg = JSON.parse(readFileSync(cfgPath, "utf8")), url = String(cfg.url ?? "").replace(/\/+$/, "");
   const k = { ...WD, ...(Number(cfg.watchdog?.staleSec) >= 0 && cfg.watchdog?.staleSec != null ? { STALE_MS: Number(cfg.watchdog.staleSec) * 1000 } : {}), ...(cfg.watchdog?.gapSec != null ? { GAP_MS: Number(cfg.watchdog.gapSec) * 1000 } : {}) };
   if (cfg.watchdog?.off === true) return { phase: "off", acts: [], why: "watchdog.off in runner.json" };
-  const H = { authorization: `Bearer ${cfg.token}`, "content-type": "application/json" };
-  const call = async (op: string, a: any = {}) => { const r = await f(`${url}/v1/${op}`, { method: "POST", headers: H, body: JSON.stringify({ space: cfg.space, ...a }), signal: AbortSignal.timeout(15_000) }); const j: any = await r.json(); if (!j.ok) throw new Error(j.error ?? `HTTP ${r.status}`); return j.result; };
+  const call = (op: string, a: any = {}) => apiCall({ ...cfg, url }, op, a, { timeoutMs: 15_000, fetcher: f });
   let st = load(), server_ok = false, online = false, last_seen: number | null = null;
   try { server_ok = (await f(`${url}/health`, { signal: AbortSignal.timeout(10_000) })).ok; } catch {}
   if (server_ok) try {

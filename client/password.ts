@@ -19,6 +19,7 @@
 //   forgotten kitebook owner reset-password on the server's shell, or kitebook devices reset-password <id> from another trusted device:
 //             the server forgets the key and lets that device set a new one for 15 minutes (kitebook password set there).
 import "./brand.ts";
+import { apiCall } from "./api.ts";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync, openSync, closeSync, chmodSync, readdirSync } from "fs";
 import { join, dirname } from "path";
 import * as C from "crypto";
@@ -216,10 +217,7 @@ export async function serveSetup(slot: string, cfgPath: string, hash: string, ex
 
 // ---- the server side of setting it ----
 const cfgOf = (p: string) => { try { const c = JSON.parse(readFileSync(p, "utf8")); return { url: String(c.url).replace(/\/+$/, ""), token: String(c.token), name: c.name ? String(c.name) : "" }; } catch { return null; } };
-async function api(c: { url: string; token: string }, op: string, a: any = {}): Promise<any> {
-  const r = await fetch(`${c.url}/v1/${op}`, { method: "POST", headers: { authorization: `Bearer ${c.token}`, "content-type": "application/json" }, body: JSON.stringify(a), signal: AbortSignal.timeout(20_000) });
-  const j: any = await r.json().catch(() => ({})); if (!j.ok) throw Object.assign(new Error(j.error ?? `HTTP ${r.status}`), { status: r.status }); return j.result;
-}
+const api = (c: { url: string; token: string }, op: string, a: any = {}) => apiCall({ url: c.url, token: c.token }, op, a, { timeoutMs: 20_000 });
 // a new password key: wrapped, registered with the server (proof from a key this device already has when the server wants one), then
 // written. Not enrolled yet (the runner never started): written now, the runner registers it at its first start (client/device.ts).
 // pre: a key made earlier and the proof already signed for it (kitebook password change asks for the OLD password before the new one)

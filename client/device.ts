@@ -8,6 +8,7 @@
 //   kitebook devices  list | approve <id> | revoke <id> | rename <id> <name>   (approve asks for presence; revoke never does)
 // State (not secret: ids and public keys) lives in ~/.kitebook/device-<runner>.json, so the CLI and the runner agree on the slot.
 import "./brand.ts";
+import { apiCall } from "./api.ts";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { homedir, hostname, platform, release } from "os";
@@ -85,10 +86,7 @@ export const assertFor = async (runner: string, action: string, reason?: string)
 // ---- CLI ----
 export const cfgOf = (argv: string[]) => { const f = argv.find(a => a.endsWith(".json")) ?? process.env.KITEBOOK_RUNNER_CONFIG ?? join(dir(), "runner.json");
   try { const c = JSON.parse(readFileSync(f, "utf8")); return { url: String(c.url).replace(/\/+$/, ""), token: String(c.token), name: String(c.name ?? "") }; } catch { return null; } };
-async function api(c: { url: string; token: string }, op: string, a: any = {}) {
-  const r = await fetch(`${c.url}/v1/${op}`, { method: "POST", headers: { authorization: `Bearer ${c.token}`, "content-type": "application/json" }, body: JSON.stringify(a), signal: AbortSignal.timeout(20_000) });
-  const j: any = await r.json().catch(() => ({})); if (!j.ok) throw new Error(j.error ?? `HTTP ${r.status}`); return j.result;
-}
+const api = (c: { url: string; token: string }, op: string, a: any = {}) => apiCall({ url: c.url, token: c.token }, op, a, { timeoutMs: 20_000 });
 // the device state that belongs to this runner.json (by the runner's peer name from whoami; else the only one there is)
 export async function mine(c: { url: string; token: string; name?: string }): Promise<DevState | null> {
   let name = c.name; if (!name) { try { name = (await api(c, "whoami")).name; } catch {} }

@@ -57,6 +57,7 @@ Routine CI runs typecheck, unit tests, a production build and `bun scripts/relea
 | `src/start.ts`, `src/oauth.ts` | The `/start` page; OAuth (DCR, PKCE, device grant) |
 | `src/guide.ts` | What agents read at `/llms.txt`. Update it when behaviour changes |
 | `client/runner.ts` + `client/runner-*.ts` | The Mac runner. **Keep `client/` flat**, because the signed runner manifest and `install.sh` cover exactly `client/*.ts` |
+| `client/api.ts`, `client/resource-guard.ts` | Authenticated client API calls and shared failure/deadline limits; request workflows own retries |
 | `client/cli.ts`, `client/admin.ts` | `kitebook` CLI (any op), admin CLI |
 | `client/guard.ts` | The runner's destructive-command / deploy / spend guard |
 | `client/mcp-stdio.mjs` | stdio ⇄ `/mcp` bridge for MCP clients that only do stdio |
@@ -74,6 +75,8 @@ Routine CI runs typecheck, unit tests, a production build and `bun scripts/relea
 - Never commit secrets, a real `.dev.vars`, `runner.json` or keys.
 
 ## Code style
+Use `client/api.ts` for authenticated `/v1` JSON calls. It consumes the response within `resource-guard.ts` deadlines and never retries writes. Keep workflow-specific recovery (such as CLI OAuth refresh) explicit in its caller.
+
 Dense TypeScript that matches the code around it. Comments explain *why*, not what. No new dependencies without a reason in the PR: the Worker's are listed in `package.json` (Better Auth and its plugins, kysely, zod, jose, aws4fetch, all pinned), and the runner has none beyond Bun.
 
 ## Security
