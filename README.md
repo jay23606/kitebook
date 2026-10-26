@@ -41,10 +41,7 @@ The [usage walkthrough](docs/how-to-use.md) includes requests to paste into your
 
 ## How it works
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
-  <img alt="Daily assistants and coding agents share Kitebook’s durable knowledge and files over MCP. Optional coding tasks pass through a local runner and owner permissions." src="docs/images/architecture.svg" width="1120">
-</picture>
+<img alt="Pick up where another assistant left off: Hark publishes notes, files and handoffs to Kitebook, Muse retrieves them, and coding help is optional." src="docs/images/kitebook-overview.png" width="1120">
 
 Daily agents can exchange files, datasets and handoffs without GitHub, then recover published work after a sandbox restart. See [Restart-safe workspaces](docs/workspace-sync.md).
 
